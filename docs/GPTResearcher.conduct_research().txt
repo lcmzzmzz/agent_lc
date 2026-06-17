@@ -1,0 +1,60 @@
+GPTResearcher.conduct_research()
+
+一：判断是否深度研究类型 如果是的则走深度研究方法
+
+        if self.report_type == ReportType.DeepResearch.value and self.deep_researcher:
+            self._current_step = "deep_research"
+            return await self._handle_deep_research(on_progress)
+二：自动选择最合适的研究agent类型（如科技、金融、医疗等）
+
+self.agent, self.role = await choose_agent
+
+三.执行研究流程——搜索、抓取、上下文整理
+  self.context = await self.research_conductor.conduct_research()
+
+Research_conductor.conduct_research()：
+1：初始化（清空状态、记录日志）
+
+2.看看有没有agent角色没有就自动选择一个 同 二步骤 逻辑
+
+
+3.检测 MCP 检索器是否存在 
+    has_mcp_retriever = any("mcpretriever" in r.__name__.lower() for r in self.researcher.retrievers)
+
+
+4：根据 report_source 选择资料来源（7 条分支路径）
+分支 A：source_urls     →  用户指定了网址 → 直接抓这些网页  
+research_data = await self._get_context_by_urls(self.researcher.source_urls)
+是否用网络搜索补充指定 URL 的不足，给的网址不够，再上网搜搜补充
+            if self.researcher.complement_source_urls:		# 正经注释：是否用网络搜索补充指定 URL 的不足 / 大白话注释：给的网址不够，再上网搜搜补充
+                self.logger.info("Complementing with web search")
+                additional_research = await self._get_context_by_web_search(self.researcher.query, [], self.researcher.query_domains)
+                research_data += ' '.join(additional_research)	# 正经注释：将补充内容拼接到已有数据 / 大白话注释：把补充搜到的加到篮子里
+分支 B：Web             → 纯网络搜索
+ research_data = await self._get_context_by_web_search(self.researcher.query, [], self.researcher.query_domains)
+
+分支 C：Local           → 读本地文件
+读取配置文件夹里的 PDF/Word/TXT 等
+ document_data = await DocumentLoader(self.researcher.cfg.doc_path).load()
+加载到向量库 ，支持语义搜索
+            if self.researcher.vector_store:				
+                self.researcher.vector_store.load(document_data)
+直接在文档里做语义搜索
+ research_data = await self._get_context_by_web_search(self.researcher.query, document_data, self.researcher.query_domains)
+分支 D：Hybrid          → 本地 + 网络混合
+结合分支C和分支D
+分支 E：Azure           → 微软云存储
+分支 F：LangChainDocs   → 代码传入的文档对象
+直接用代码传进来的 LangChain 文档对象
+分支 G：VectorStore     → 向量数据库直接检索
+文档已经提前存入向量库（如 Pinecone、Chroma），直接检索，不需要搜索和抓取
+research_data = await self._get_context_by_vectorstore(self.researcher.query, self.researcher.vector_store_filter)
+
+
+
+
+
+
+四.报告生成前执行，提升用户体验。将上下文列表转换为字符串供图片分析使用，生成与内容相关的配图
+
+self.available_images = await self.image_generator.plan_and_generate_images
