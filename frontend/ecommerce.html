@@ -6,6 +6,7 @@
 <title>EcomResearcher · 跨境电商选品助手</title>
 <!-- Markdown 渲染 + 雷达图（演示用 CDN，需联网） -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root { --bg:#0f172a; --card:#1e293b; --border:#334155; --txt:#e2e8f0; --mut:#94a3b8; --acc:#38bdf8; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; }
@@ -204,7 +205,10 @@ function renderAudit(audit){
 
 function renderReport(md){
   $("reportCard").classList.remove("hidden");
-  $("report").innerHTML = marked.parse(md || "");
+  const html = marked.parse(md || "");
+  $("report").innerHTML = DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+  });
 }
 
 function showError(msg){ const e=document.createElement("div"); e.className="card err"; e.textContent=msg; document.querySelector("main").appendChild(e); }

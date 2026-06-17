@@ -62,8 +62,8 @@ def extract_json(text: str) -> dict | None:
 
 
 def clamp(value) -> float:
-    """把分数限制在 [0, 10]。"""
-    return float(max(0.0, min(10.0, value)))
+    """把分数限制在 [0, 10]，兼容模型常返回的数字字符串。"""
+    return float(max(0.0, min(10.0, float(value))))
 
 
 async def llm_json(llm_fn: LlmFn | None, system: str, user: str):

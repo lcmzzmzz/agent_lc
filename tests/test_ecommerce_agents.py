@@ -30,6 +30,22 @@ async def fake_llm(system: str, user: str) -> str:
     )
 
 
+async def string_score_llm(system: str, user: str) -> str:
+    """模拟模型把数字包成字符串返回。"""
+    return (
+        '{"trend_score": "8.5", "competition_score": "5", "pain_point_score": "9", '
+        '"margin_score": "7", "risk_score": "6", "reasons": ["数字字符串"]}'
+    )
+
+
+async def partial_bad_score_llm(system: str, user: str) -> str:
+    """模拟部分字段不可转数字，应该回退到规则基线字段。"""
+    return (
+        '{"trend_score": null, "competition_score": "bad", "pain_point_score": 9, '
+        '"margin_score": "", "risk_score": 6, "reasons": ["部分字段异常"]}'
+    )
+
+
 # ---------------------------------------------------------------------------
 # Task 3: planner / trend / competitor / review
 # ---------------------------------------------------------------------------
@@ -148,6 +164,30 @@ async def test_run_opportunity_scoring_uses_llm():
     assert "需求旺盛" in score["reasons"]
     # overall 仍由加权公式重算，落在合理区间
     assert 0.0 <= score["overall_score"] <= 10.0
+
+
+@pytest.mark.asyncio
+async def test_run_opportunity_scoring_accepts_string_scores():
+    state = await run_opportunity_scoring(build_ready_state(), llm_fn=string_score_llm)
+
+    score = state["opportunity_score"]
+    assert score["scored_by"] == "llm"
+    assert score["trend_score"] == 8.5
+    assert score["competition_score"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_run_opportunity_scoring_ignores_bad_llm_score_fields():
+    state = await run_opportunity_scoring(
+        build_ready_state(), llm_fn=partial_bad_score_llm
+    )
+
+    score = state["opportunity_score"]
+    assert score["scored_by"] == "llm"
+    assert score["trend_score"] == 7.0
+    assert score["competition_score"] == 6.0
+    assert score["pain_point_score"] == 9.0
+    assert score["margin_score"] == 6.0
 
 
 @pytest.mark.asyncio

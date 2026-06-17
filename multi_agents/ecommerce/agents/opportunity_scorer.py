@@ -47,6 +47,14 @@ def _recommendation(overall: float) -> str:
     return "暂不建议进入，需补充数据验证"
 
 
+def _score_from_llm(data: dict, key: str, fallback: float) -> float:
+    value = data.get(key, fallback)
+    try:
+        return clamp(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
 async def run_opportunity_scoring(
     state: EcommerceResearchState,
     *,
@@ -80,11 +88,15 @@ async def run_opportunity_scoring(
         )
         data, used_llm = await llm_json(llm_fn, OPPORTUNITY_SCORER_SYSTEM_PROMPT, user)
         if used_llm and data:
-            trend_score = clamp(data.get("trend_score", trend_score))
-            competition_score = clamp(data.get("competition_score", competition_score))
-            pain_point_score = clamp(data.get("pain_point_score", pain_point_score))
-            margin_score = clamp(data.get("margin_score", margin_score))
-            risk_score = clamp(data.get("risk_score", risk_score))
+            trend_score = _score_from_llm(data, "trend_score", trend_score)
+            competition_score = _score_from_llm(
+                data, "competition_score", competition_score
+            )
+            pain_point_score = _score_from_llm(
+                data, "pain_point_score", pain_point_score
+            )
+            margin_score = _score_from_llm(data, "margin_score", margin_score)
+            risk_score = _score_from_llm(data, "risk_score", risk_score)
             if isinstance(data.get("reasons"), list):
                 llm_reasons = [str(r) for r in data["reasons"] if r][:5]
 
