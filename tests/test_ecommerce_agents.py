@@ -96,6 +96,18 @@ async def test_run_review_insight_returns_pain_points():
 
 
 @pytest.mark.asyncio
+async def test_run_review_insight_translates_to_chinese_with_llm():
+    async def zh_llm(system, user):
+        return '{"pain_points": ["电池续航差", "清洗麻烦", "漏水"]}'
+
+    state = run_planner(create_initial_state("portable blender"))
+    updated = await run_review_insight(state, search_fn=fake_search, llm_fn=zh_llm)
+
+    assert updated["review_result"]["pain_points_language"] == "zh"
+    assert "电池续航差" in updated["review_result"]["pain_points"]
+
+
+@pytest.mark.asyncio
 async def test_run_trend_research_degrades_on_search_failure():
     async def failing_search(query, max_results):
         raise RuntimeError("network down")

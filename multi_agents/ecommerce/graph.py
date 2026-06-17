@@ -1,24 +1,23 @@
 """
-EcomResearcher 工作流编排。
+EcomResearcher 工作流编排（含全链路日志）。
 
 【正经注释】
 run_ecommerce_graph 把 7 个 Agent 串成一条流水线：
 planner(同步) → [trend, competitor, review] 并发 → opportunity_scoring(LLM优先) →
 report_writer → quality_reviewer。
-三个研究节点并发执行，各自持有独立子状态（独立 audit_log/errors），
-避免共享可变集合在协程间交错；并发结束后由本函数统一合并结果与日志。
-opportunity_scoring 为异步节点，支持注入 llm_fn 做智能打分。
-progress_callback 用于在阶段切换时对外推送进度（如 WebSocket 流式）。
+每个阶段切换时既向外推送 progress_callback（WebSocket 流式），
+也写入 multi_agents.ecommerce logger（落到 logs/ecommerce/<ts>_<query>.log）。
+review 节点额外接收 llm_fn，用于把英文评论归纳为中文痛点。
 
 【大白话注释】
-把 7 个角色按顺序连起来：先规划，再让趋势/竞品/评论三个角色同时干活，
-然后评分、写报告、做质量检查。每完成一个大阶段，会"喊一声"告诉外面，
-方便前端实时显示进度。
+把 7 个角色按顺序连起来，每走完一个大阶段就"喊一声"：
+既实时推给前端，也记到这次研究的专属日志文件里。
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 
 from multi_agents.ecommerce.agents.competitor_analyzer import run_competitor_analysis
@@ -31,6 +30,8 @@ from multi_agents.ecommerce.agents.trend_researcher import run_trend_research
 from multi_agents.ecommerce.llm_helper import LlmFn
 from multi_agents.ecommerce.state import EcommerceResearchState
 from multi_agents.ecommerce.tools.product_search import SearchFn
+
+logger = logging.getLogger("multi_agents.ecommerce")
 
 # 阶段进度回调：(event, payload) -> None
 ProgressFn = Callable[[str, dict], Awaitable[None]]
@@ -57,11 +58,13 @@ async def run_ecommerce_graph(
     progress_callback: ProgressFn | None = None,
 ) -> EcommerceResearchState:
     async def _emit(event: str, payload: dict | None = None) -> None:
+        msg = f"[graph] {event}" + (f" {payload}" if payload else "")
+        logger.info(msg)
         if progress_callback is not None:
             try:
                 await progress_callback(event, payload or {})
             except Exception:
-                pass  # 进度推送失败不应影响主流程
+                logger.warning(f"[graph] progress_callback 推送失败 event={event}")
 
     await _emit("start", {"query": state["query"], "market": state["target_market"]})
 
@@ -72,15 +75,14 @@ async def run_ecommerce_graph(
         {"queries": len(state["research_plan"].get("trend_queries", []))},
     )
 
-    # 2. 三个研究节点并发
+    # 2. 三个研究节点并发（review 额外接收 llm_fn 做中文归纳）
     await _emit("research_running", {"agents": ["trend", "competitor", "review"]})
     trend_state, competitor_state, review_state = await asyncio.gather(
         run_trend_research(_make_child_state(state), search_fn=search_fn),
         run_competitor_analysis(_make_child_state(state), search_fn=search_fn),
-        run_review_insight(_make_child_state(state), search_fn=search_fn),
+        run_review_insight(_make_child_state(state), search_fn=search_fn, llm_fn=llm_fn),
     )
 
-    # 合并研究结果与各自日志
     state["trend_result"] = trend_state["trend_result"]
     state["competitor_result"] = competitor_state["competitor_result"]
     state["review_result"] = review_state["review_result"]

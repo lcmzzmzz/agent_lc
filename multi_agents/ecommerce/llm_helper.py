@@ -6,18 +6,21 @@ LLM 调用辅助：注入式 llm_fn + JSON 提取 + 规则 fallback。
 默认实现 default_llm_fn 复用 GPT Researcher 的 Config + create_chat_completion。
 llm_json / llm_text 统一做异常吞掉、JSON 提取，返回 (result, used)，
 让 Agent 可以"LLM 优先、规则兜底"，且测试可用 fake_llm 替换、不触网不花钱。
+所有 LLM 调用失败都会写 multi_agents.ecommerce logger（便于排查）。
 
 【大白话注释】
-跟大模型打交道的统一工具：默认用项目自带的大模型，
-也能换成假的（测试用）。调失败就返回"没用到 LLM"，
-让上层自动退回原来的规则打分，不会崩。
+跟大模型打交道的统一工具：默认用项目自带的大模型，也能换成假的（测试用）。
+调失败就记日志并返回"没用到 LLM"，让上层自动退回规则，不会崩。
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Awaitable, Callable
+
+logger = logging.getLogger("multi_agents.ecommerce")
 
 # 注入式 LLM 函数签名：(system_prompt, user_prompt) -> 模型输出文本
 LlmFn = Callable[[str, str], Awaitable[str]]
@@ -72,7 +75,8 @@ async def llm_json(llm_fn: LlmFn | None, system: str, user: str):
         return None, False
     try:
         raw = await llm_fn(system, user)
-    except Exception:
+    except Exception as exc:
+        logger.warning(f"[llm] 调用失败(JSON): {exc}")
         return None, False
     data = extract_json(raw)
     return (data, True) if isinstance(data, dict) else (None, False)
@@ -84,7 +88,8 @@ async def llm_text(llm_fn: LlmFn | None, system: str, user: str):
         return None, False
     try:
         raw = await llm_fn(system, user)
-    except Exception:
+    except Exception as exc:
+        logger.warning(f"[llm] 调用失败(text): {exc}")
         return None, False
     text = (raw or "").strip()
     return (text, True) if text else (None, False)
