@@ -1,3 +1,59 @@
+# EcomResearcher · 跨境电商 AI 选品与市场调研助手
+
+> 基于 [GPT Researcher](https://github.com/assafelovic/gpt-researcher) 与 LangGraph 二次开发的跨境电商垂直领域多 Agent 工作流。
+> 输入品类关键词，自动完成市场趋势、竞品格局、用户评论痛点研究，生成机会评分、结构化选品报告、质量检查与执行审计日志。
+
+## 它能展示什么
+
+- 趋势 / 竞品 / 评论 **三路并发**研究
+- **LLM 打分 + 规则兜底**（DeepSeek 或任意 OpenAI 兼容模型）
+- **WebSocket** 实时进度流（8 段阶段推送）
+- **审计日志** + **质量评估**（引用覆盖率 / 证据充分度 / 风险披露 / 过度确定性拦截）
+- 失败降级，长链路任务稳定不崩
+
+## 标准样例（无需运行即可阅读）
+
+| Case | 深度 | 报告 | 评估摘要 |
+|------|------|------|----------|
+| Portable Blender | standard | [report](outputs/ecommerce/demo-cases/portable-blender/report.md) | [evaluation](outputs/ecommerce/demo-cases/portable-blender/evaluation.json) |
+| Pet Water Fountain | standard | [report](outputs/ecommerce/demo-cases/pet-water-fountain/report.md) | [evaluation](outputs/ecommerce/demo-cases/pet-water-fountain/evaluation.json) |
+| Standing Desk | deep | [report](outputs/ecommerce/demo-cases/standing-desk/report.md) | [evaluation](outputs/ecommerce/demo-cases/standing-desk/evaluation.json) |
+
+## 快速开始
+
+```bash
+pip install -r requirements.txt
+# .env: TAVILY_API_KEY=...  OPENAI_API_KEY=...  OPENAI_BASE_URL=...  SMART_LLM=openai:<model>
+python -m multi_agents.ecommerce --query "portable blender" --market US --depth standard
+```
+
+输出：`outputs/ecommerce/<关键词>-{report.md,audit.json,quality.json,evaluation.json}` + 全链路日志 `logs/ecommerce/<时间戳>_<关键词>.log`。
+
+## 界面预览
+
+启动后端 `python -m uvicorn main:app --port 8000`，浏览器访问：
+
+- 研究页：`http://localhost:8000/site/ecommerce.html`（输入品类 → 实时进度 → 评分雷达图 → 报告）
+- 评估对比页：`http://localhost:8000/site/ecommerce-eval.html`（三个 case 横向对比）
+
+> 截图待补充：运行后将界面截图保存到 `docs/assets/ecommerce/{home,workflow,evaluation}.png`（见该目录 PLACEHOLDER）。
+
+## 简历亮点
+
+- 在开源 GPT Researcher 上二次开发跨境电商选品垂直多 Agent 工作流（LangGraph 编排 7 个 Agent，三路并发研究）
+- LLM 结构化打分 + 规则降级兜底；WebSocket 阶段流式进度；审计日志与质量评估（引用覆盖率 / 证据充分度 / 风险披露 / 过度确定性）
+- 标准化 demo case + 评估对比页，可重复导出与横向比较
+
+## 文档
+
+- 设计文档：`docs/superpowers/specs/2026-06-18-ecommerce-research-agent-design.md`
+- 实现计划：`docs/superpowers/plans/2026-06-18-ecommerce-research-agent.md`
+- 使用说明：`docs/ecommerce-researcher.md`
+
+---
+
+<!-- 以下为原项目 GPT Researcher 的说明；EcomResearcher 在其基础上二次开发。 -->
+
 <div align="center" id="top">
 
 <img src="https://github.com/assafelovic/gpt-researcher/assets/13554167/20af8286-b386-44a5-9a83-3be1365139c3" alt="Logo" width="80">
