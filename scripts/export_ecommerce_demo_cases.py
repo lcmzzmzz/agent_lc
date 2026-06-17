@@ -209,11 +209,51 @@ async def _run_one_case(
     }
 
 
+def _build_error_entry(case: dict[str, Any], error_msg: str) -> dict[str, Any]:
+    """单个 case 执行失败时构造的清单条目。
+
+    保留 slug / title / query 等元数据，让清单行仍然可读；
+    额外加 status='error' 与 error 字段，便于事后排查。
+    成功路径不会带这两个字段，所以已提交的 manifest 行形状不变。
+    """
+    slug = case["slug"]
+    return {
+        "slug": slug,
+        "title": case["title"],
+        "query": case["query"],
+        "target_market": case["target_market"],
+        "platforms": case["platforms"],
+        "depth": case["depth"],
+        # 失败时不会有 report 等文件，路径字段省略（与成功路径的字段集合区分开）
+        "report": f"/outputs/ecommerce/demo-cases/{slug}/report.md",
+        "evaluation": f"/outputs/ecommerce/demo-cases/{slug}/evaluation.json",
+        "audit": f"/outputs/ecommerce/demo-cases/{slug}/audit.json",
+        "quality": f"/outputs/ecommerce/demo-cases/{slug}/quality.json",
+        "status": "error",
+        "error": error_msg,
+    }
+
+
 async def _run_all(output_root: Path, force_clean: bool) -> list[dict[str, Any]]:
-    """串行跑三个 case（避免并发把 Tavily / DeepSeek 速率打爆）。"""
+    """串行跑三个 case（避免并发把 Tavily / DeepSeek 速率打爆）。
+
+    每个 case 独立 try/except：某一个 case 抛异常（Tavily 限流、DeepSeek 5xx、
+    网络抖动等）不会中断其它 case，也不会阻止最后的 manifest 落盘。
+    失败的 case 以 status='error' 条目进入清单，便于事后重跑。
+    """
     entries: list[dict[str, Any]] = []
     for case in CASES:
-        entry = await _run_one_case(case, output_root, force_clean)
+        try:
+            entry = await _run_one_case(case, output_root, force_clean)
+        except Exception as exc:  # noqa: BLE001 — 隔离任意失败，逐个记录后继续
+            # 不让单个 case 的失败拖垮整批；记录错误条目并继续下一个
+            error_msg = f"{type(exc).__name__}: {exc}"
+            print(
+                f"[demo] !!! case='{case['slug']}' FAILED, continuing. "
+                f"error={error_msg}",
+                flush=True,
+            )
+            entry = _build_error_entry(case, error_msg)
         entries.append(entry)
     return entries
 
@@ -240,17 +280,31 @@ def main() -> int:
     output_root = Path(args.output_root).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
-    entries = asyncio.run(_run_all(output_root, force_clean=not args.keep_old))
-    manifest_path = _write_manifest(output_root, entries)
+    # try/finally 保证：即便 _run_all 自身抛出意外异常（例如 event loop 启动失败），
+    # 已经收集到的 entries 也会落盘成 manifest。正常情况下 _run_all 内部已对每个
+    # case 做了 try/except，不会走到 finally 的兜底分支。
+    entries: list[dict[str, Any]] = []
+    try:
+        entries = asyncio.run(_run_all(output_root, force_clean=not args.keep_old))
+    finally:
+        # 只要收集到任何条目就落盘，绝不让单个失败把整份清单吞掉
+        if entries:
+            _write_manifest(output_root, entries)
 
+    manifest_path = output_root / "case-index.json"
     print(f"\n[demo] manifest -> {manifest_path}")
     print(f"[demo] {len(entries)} cases exported under {output_root}")
     for entry in entries:
-        s = entry.get("summary") or {}
-        print(
-            f"  - {entry['slug']:<20} score={s.get('overall_score')} "
-            f"evidence={s.get('evidence_count')} report={entry['report']}"
-        )
+        status = entry.get("status")
+        if status == "error":
+            # 失败条目没有 summary，单独打印错误，方便定位
+            print(f"  - {entry['slug']:<20} status=ERROR error={entry.get('error')}")
+        else:
+            s = entry.get("summary") or {}
+            print(
+                f"  - {entry['slug']:<20} score={s.get('overall_score')} "
+                f"evidence={s.get('evidence_count')} report={entry['report']}"
+            )
     return 0
 
 
