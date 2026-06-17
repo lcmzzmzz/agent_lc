@@ -84,7 +84,6 @@ async def ecommerce_websocket(websocket: WebSocket) -> None:
             target_market=data.get("target_market", "US"),
             platforms=data.get("platforms", ["amazon", "google"]),
             depth=data.get("depth", "standard"),
-            use_llm=data.get("use_llm", True),
             llm_fn=default_llm_fn if data.get("use_llm", True) else None,
             progress_callback=progress,
         )

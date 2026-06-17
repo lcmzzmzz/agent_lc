@@ -118,6 +118,23 @@ print(result["opportunity_score"]["overall_score"])
 print(result["quality_check"])
 ```
 
+## API 与前端（可选）
+
+### FastAPI 端点
+启动后端：`python -m uvicorn main:app --port 8000`
+
+- `POST /api/ecommerce/research`：请求体 `{query, target_market, platforms, depth, use_llm}`，同步返回 `report / opportunity_score / quality_check / audit_log`。
+- `WS /ws/ecommerce`：发 `{query,...}` 后，逐阶段推送 `start → planner_done → research_running → research_done → scoring_done → report_done → quality_done`，最后 `done` 事件回传完整结果。
+
+路由以独立 `APIRouter` 注册（`backend/server/ecommerce_api.py`），不侵入主路由。
+
+### 前端页面
+启动后端后访问：`http://localhost:8000/site/ecommerce.html`
+
+- 输入品类关键词、目标市场、深度，勾选「启用 LLM 打分」
+- 实时显示 8 段执行进度时间线（WebSocket 推送）
+- 机会评分（6 维雷达图）+ 质量检查 + Agent 执行链路表 + Markdown 报告渲染
+
 ## 简历表达
 
 > 基于 GPT Researcher 和 LangGraph 二次开发跨境电商垂直领域多 Agent 工作流，
