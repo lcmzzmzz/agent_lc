@@ -1,3 +1,0 @@
-[mcp_servers.gpt-researcher]
-command = "uvx"
-args = ["gpt-researcher"]
