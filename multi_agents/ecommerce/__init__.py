@@ -10,8 +10,6 @@ EcomResearcher：跨境电商 AI 选品与市场调研助手。
 评论痛点分析，打分，最后输出一份选品报告 + 质量检查 + 执行日志。
 """
 
-# 注意：run_ecommerce_research 在 runner.py（Task 5）就绪后，再在此处导出，
-# 避免依赖链未完成时 import 整个包失败。
-# 当前可独立导入的入口：from multi_agents.ecommerce.state import create_initial_state
+from multi_agents.ecommerce.runner import run_ecommerce_research
 
-__all__: list[str] = []
+__all__ = ["run_ecommerce_research"]
