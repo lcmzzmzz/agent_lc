@@ -159,6 +159,9 @@ print(result["quality_check"])
 ### 前端页面
 启动后端后访问：`http://localhost:8000/site/ecommerce.html`
 
+## Evaluation page
+Open `http://localhost:8000/site/ecommerce-eval.html` to compare the three canonical demo cases.
+
 - 输入品类关键词、目标市场、深度，勾选「启用 LLM 打分」
 - 实时显示 8 段执行进度时间线（WebSocket 推送）
 - 机会评分（6 维雷达图）+ 质量检查 + Agent 执行链路表 + Markdown 报告渲染
