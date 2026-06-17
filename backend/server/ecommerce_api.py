@@ -42,6 +42,9 @@ def _summarize(result: dict) -> dict:
     return {
         "query": result.get("query"),
         "target_market": result.get("target_market"),
+        "trend_result": result.get("trend_result"),
+        "competitor_result": result.get("competitor_result"),
+        "review_result": result.get("review_result"),
         "opportunity_score": result.get("opportunity_score"),
         "quality_check": result.get("quality_check"),
         "audit_log": result.get("audit_log"),
