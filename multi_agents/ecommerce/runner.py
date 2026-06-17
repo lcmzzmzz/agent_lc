@@ -16,6 +16,7 @@ default_search_fn 复用 GPT Researcher 的默认检索器（如 Tavily），
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -35,16 +36,24 @@ def slugify(value: str) -> str:
 
 
 async def default_search_fn(query: str, max_results: int) -> list[dict[str, Any]]:
-    """复用 GPT Researcher 默认检索器；任何异常都降级为空结果。"""
-    try:
-        from gpt_researcher.actions.retriever import get_default_retriever
+    """复用 GPT Researcher 默认检索器；任何异常都降级为空结果。
 
-        retriever_cls = get_default_retriever()  # 例如 TavilySearch 类
-        retriever = retriever_cls(query=query)
-        return retriever.search(max_results=max_results) or []
-    except Exception as exc:  # 检索失败不应中断主流程
-        print(f"[ecommerce] default search failed for '{query}': {exc}")
-        return []
+    检索器是同步阻塞 IO，用 asyncio.to_thread 放到线程池，
+    让三个研究 Agent 的多次检索能真正并发执行。
+    """
+
+    def _sync_search() -> list[dict[str, Any]]:
+        try:
+            from gpt_researcher.actions.retriever import get_default_retriever
+
+            retriever_cls = get_default_retriever()  # 例如 TavilySearch 类
+            retriever = retriever_cls(query=query)
+            return retriever.search(max_results=max_results) or []
+        except Exception as exc:  # 检索失败不应中断主流程
+            print(f"[ecommerce] default search failed for '{query}': {exc}")
+            return []
+
+    return await asyncio.to_thread(_sync_search)
 
 
 async def run_ecommerce_research(

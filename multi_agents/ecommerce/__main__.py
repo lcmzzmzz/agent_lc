@@ -40,6 +40,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # 加载 .env，使 TAVILY_API_KEY 等检索器配置生效
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except Exception:
+        pass
+
     args = build_parser().parse_args()
 
     result = asyncio.run(

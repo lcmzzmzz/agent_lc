@@ -50,14 +50,18 @@ def split_sentences(text: str) -> list[str]:
 
 
 def extract_review_insights(sources: list[EcommerceSource], limit: int = 12) -> list[str]:
-    """从 sources 中抽取含抱怨关键词的句子，最多 limit 条。"""
+    """从 sources 中抽取含抱怨关键词的句子，最多 limit 条（按句子去重）。"""
     insights: list[str] = []
+    seen: set[str] = set()
 
     for source in sources:
         text = f"{source.get('snippet', '')} {source.get('content', '')}"
         for sentence in split_sentences(text):
             lower = sentence.lower()
             if any(keyword in lower for keyword in COMPLAINT_KEYWORDS):
+                if sentence in seen:
+                    continue
+                seen.add(sentence)
                 insights.append(sentence)
                 if len(insights) >= limit:
                     return insights
