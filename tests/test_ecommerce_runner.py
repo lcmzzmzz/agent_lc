@@ -37,15 +37,18 @@ async def test_run_ecommerce_research_writes_outputs(tmp_path):
     assert result["final_report"]
     assert result["quality_check"]
     assert result["audit_log"]
+    assert result["evaluation_summary"]["overall_score"] >= 0
     assert result["output_paths"]["report"].endswith("portable-blender-report.md")
 
     report_path = tmp_path / "portable-blender-report.md"
     audit_path = tmp_path / "portable-blender-audit.json"
     quality_path = tmp_path / "portable-blender-quality.json"
+    evaluation_path = tmp_path / "portable-blender-evaluation.json"
 
     assert report_path.exists()
     assert audit_path.exists()
     assert quality_path.exists()
+    assert evaluation_path.exists()
     assert "跨境电商选品调研报告" in report_path.read_text(encoding="utf-8")
     assert json.loads(quality_path.read_text(encoding="utf-8"))["citation_coverage"] >= 0
     # 审计日志应覆盖全部 7 个 agent

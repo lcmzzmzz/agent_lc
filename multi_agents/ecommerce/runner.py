@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from multi_agents.ecommerce.evaluation import build_evaluation_summary
 from multi_agents.ecommerce.graph import ProgressFn, run_ecommerce_graph
 from multi_agents.ecommerce.llm_helper import LlmFn
 from multi_agents.ecommerce.state import EcommerceResearchState, create_initial_state
@@ -129,6 +130,7 @@ async def run_ecommerce_research(
     report_path = output_path / f"{slug}-report.md"
     audit_path = output_path / f"{slug}-audit.json"
     quality_path = output_path / f"{slug}-quality.json"
+    evaluation_path = output_path / f"{slug}-evaluation.json"
 
     report_path.write_text(final_state["final_report"], encoding="utf-8")
     audit_path.write_text(
@@ -139,11 +141,18 @@ async def run_ecommerce_research(
         json.dumps(final_state["quality_check"], ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    evaluation_summary = build_evaluation_summary(final_state)
+    evaluation_path.write_text(
+        json.dumps(evaluation_summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    final_state["evaluation_summary"] = evaluation_summary
 
     final_state["output_paths"] = {
         "report": str(report_path),
         "audit": str(audit_path),
         "quality": str(quality_path),
+        "evaluation": str(evaluation_path),
         "log": str(log_path),
     }
     return final_state
