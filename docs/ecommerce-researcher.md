@@ -32,6 +32,34 @@ outputs/ecommerce/portable-blender-audit.json    # 各 Agent 执行审计日志
 outputs/ecommerce/portable-blender-quality.json  # 报告质量检查结果
 ```
 
+## 标准 Demo Case（已提交的样例）
+
+仓库内置三个标准 demo case，无需运行即可直接阅读，作为简历/评审的稳定样例：
+
+| Case | 深度 | 报告 | 评估摘要 |
+|------|------|------|----------|
+| Portable Blender | standard | [`report.md`](../outputs/ecommerce/demo-cases/portable-blender/report.md) | [`evaluation.json`](../outputs/ecommerce/demo-cases/portable-blender/evaluation.json) |
+| Pet Water Fountain | standard | [`report.md`](../outputs/ecommerce/demo-cases/pet-water-fountain/report.md) | [`evaluation.json`](../outputs/ecommerce/demo-cases/pet-water-fountain/evaluation.json) |
+| Standing Desk | deep | [`report.md`](../outputs/ecommerce/demo-cases/standing-desk/report.md) | [`evaluation.json`](../outputs/ecommerce/demo-cases/standing-desk/evaluation.json) |
+
+每个 case 目录下统一包含四个文件（无 slug 前缀，便于跨 case 比较）：
+
+```text
+outputs/ecommerce/demo-cases/<slug>/
+  report.md         # 选品调研报告（Markdown）
+  audit.json        # 各 Agent 执行审计日志
+  quality.json      # 质量检查结果
+  evaluation.json   # 评估摘要（总分 / 证据数 / 置信度 / 降级次数 / 耗时）
+```
+
+顶层清单：[`outputs/ecommerce/demo-cases/case-index.json`](../outputs/ecommerce/demo-cases/case-index.json)。
+
+重新导出三个 case（真实 Tavily 检索 + DeepSeek LLM 打分，可重复执行覆盖旧结果）：
+
+```bash
+python scripts/export_ecommerce_demo_cases.py --output-root outputs/ecommerce/demo-cases
+```
+
 ## 工作流
 
 ```text

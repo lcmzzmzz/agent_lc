@@ -285,6 +285,22 @@ An average run generates a 5-6 page research report in multiple formats such as 
 
 Check it out [here](https://github.com/assafelovic/gpt-researcher/tree/master/multi_agents) or head over to our documentation for [LangGraph](https://docs.gptr.dev/docs/gpt-researcher/multi_agents/langgraph) and [AG2](https://docs.gptr.dev/docs/gpt-researcher/multi_agents/ag2) for more information.
 
+## 🛒 Ecommerce Demo Cases
+
+This repo ships a vertical **cross-border ecommerce product-research** workflow (`multi_agents/ecommerce/`) built on top of the multi-agent stack, plus three committed canonical demo cases you can read without running anything:
+
+| Case | Report | Evaluation |
+|------|--------|------------|
+| Portable Blender | [report.md](outputs/ecommerce/demo-cases/portable-blender/report.md) | [evaluation.json](outputs/ecommerce/demo-cases/portable-blender/evaluation.json) |
+| Pet Water Fountain | [report.md](outputs/ecommerce/demo-cases/pet-water-fountain/report.md) | [evaluation.json](outputs/ecommerce/demo-cases/pet-water-fountain/evaluation.json) |
+| Standing Desk (deep) | [report.md](outputs/ecommerce/demo-cases/standing-desk/report.md) | [evaluation.json](outputs/ecommerce/demo-cases/standing-desk/evaluation.json) |
+
+Each case folder holds `report.md` / `audit.json` / `quality.json` / `evaluation.json`; the index is [`outputs/ecommerce/demo-cases/case-index.json`](outputs/ecommerce/demo-cases/case-index.json). See [`docs/ecommerce-researcher.md`](docs/ecommerce-researcher.md) for the full design, and regenerate them with:
+
+```bash
+python scripts/export_ecommerce_demo_cases.py --output-root outputs/ecommerce/demo-cases
+```
+
 ## 🔍 Observability
 
 GPT Researcher supports **LangSmith** for enhanced tracing and observability, making it easier to debug and optimize complex multi-agent workflows.

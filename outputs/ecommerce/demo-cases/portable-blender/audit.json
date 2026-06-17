@@ -1,0 +1,58 @@
+[
+  {
+    "agent": "ProductResearchPlannerAgent",
+    "status": "success",
+    "duration_ms": 0,
+    "source_count": 0,
+    "confidence": 1.0,
+    "warning": null
+  },
+  {
+    "agent": "TrendResearchAgent",
+    "status": "success",
+    "duration_ms": 11880,
+    "source_count": 6,
+    "confidence": 0.9,
+    "warning": null
+  },
+  {
+    "agent": "CompetitorAnalysisAgent",
+    "status": "success",
+    "duration_ms": 12605,
+    "source_count": 6,
+    "confidence": 0.9,
+    "warning": null
+  },
+  {
+    "agent": "ReviewInsightAgent",
+    "status": "success",
+    "duration_ms": 19024,
+    "source_count": 6,
+    "confidence": 0.54,
+    "warning": null
+  },
+  {
+    "agent": "OpportunityScoringAgent",
+    "status": "success",
+    "duration_ms": 5849,
+    "source_count": 18,
+    "confidence": 0.9,
+    "warning": null
+  },
+  {
+    "agent": "EcommerceReportWriterAgent",
+    "status": "success",
+    "duration_ms": 0,
+    "source_count": 18,
+    "confidence": 0.8,
+    "warning": null
+  },
+  {
+    "agent": "QualityReviewerAgent",
+    "status": "success",
+    "duration_ms": 0,
+    "source_count": 18,
+    "confidence": 0.8,
+    "warning": null
+  }
+]

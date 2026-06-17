@@ -1,0 +1,83 @@
+[
+  {
+    "slug": "portable-blender",
+    "title": "Portable Blender",
+    "query": "portable blender",
+    "target_market": "US",
+    "platforms": [
+      "amazon",
+      "google"
+    ],
+    "depth": "standard",
+    "report": "/outputs/ecommerce/demo-cases/portable-blender/report.md",
+    "evaluation": "/outputs/ecommerce/demo-cases/portable-blender/evaluation.json",
+    "audit": "/outputs/ecommerce/demo-cases/portable-blender/audit.json",
+    "quality": "/outputs/ecommerce/demo-cases/portable-blender/quality.json",
+    "started_at": "2026-06-18T04:41:41",
+    "finished_at": "2026-06-18T04:42:06",
+    "summary": {
+      "overall_score": 7.1,
+      "confidence": 0.84,
+      "evidence_count": 18,
+      "fallback_count": 0,
+      "duration_ms": 49358,
+      "recommendation": "建议谨慎测试进入",
+      "scored_by": "llm",
+      "quality_passed": true
+    }
+  },
+  {
+    "slug": "pet-water-fountain",
+    "title": "Pet Water Fountain",
+    "query": "pet water fountain",
+    "target_market": "US",
+    "platforms": [
+      "amazon",
+      "reddit"
+    ],
+    "depth": "standard",
+    "report": "/outputs/ecommerce/demo-cases/pet-water-fountain/report.md",
+    "evaluation": "/outputs/ecommerce/demo-cases/pet-water-fountain/evaluation.json",
+    "audit": "/outputs/ecommerce/demo-cases/pet-water-fountain/audit.json",
+    "quality": "/outputs/ecommerce/demo-cases/pet-water-fountain/quality.json",
+    "started_at": "2026-06-18T04:42:06",
+    "finished_at": "2026-06-18T04:42:32",
+    "summary": {
+      "overall_score": 6.5,
+      "confidence": 0.84,
+      "evidence_count": 18,
+      "fallback_count": 0,
+      "duration_ms": 67941,
+      "recommendation": "建议谨慎测试进入",
+      "scored_by": "llm",
+      "quality_passed": true
+    }
+  },
+  {
+    "slug": "standing-desk",
+    "title": "Standing Desk",
+    "query": "standing desk",
+    "target_market": "US",
+    "platforms": [
+      "amazon",
+      "google"
+    ],
+    "depth": "deep",
+    "report": "/outputs/ecommerce/demo-cases/standing-desk/report.md",
+    "evaluation": "/outputs/ecommerce/demo-cases/standing-desk/evaluation.json",
+    "audit": "/outputs/ecommerce/demo-cases/standing-desk/audit.json",
+    "quality": "/outputs/ecommerce/demo-cases/standing-desk/quality.json",
+    "started_at": "2026-06-18T04:42:32",
+    "finished_at": "2026-06-18T04:43:07",
+    "summary": {
+      "overall_score": 6.82,
+      "confidence": 0.88,
+      "evidence_count": 30,
+      "fallback_count": 0,
+      "duration_ms": 86541,
+      "recommendation": "建议谨慎测试进入",
+      "scored_by": "llm",
+      "quality_passed": true
+    }
+  }
+]

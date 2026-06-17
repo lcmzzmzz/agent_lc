@@ -1,0 +1,10 @@
+{
+  "overall_score": 7.1,
+  "confidence": 0.84,
+  "evidence_count": 18,
+  "fallback_count": 0,
+  "duration_ms": 49358,
+  "recommendation": "建议谨慎测试进入",
+  "scored_by": "llm",
+  "quality_passed": true
+}

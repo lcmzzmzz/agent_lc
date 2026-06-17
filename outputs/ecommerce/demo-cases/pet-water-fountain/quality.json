@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "citation_coverage": 1.0,
+  "evidence_sufficiency": 1.0,
+  "logic_consistency": 0.8,
+  "risk_disclosure": true,
+  "issues": []
+}

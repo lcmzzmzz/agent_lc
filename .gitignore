@@ -14,9 +14,17 @@ env.bak/
 venv.bak/
 
 #Ignore generated outputs
-outputs/
+outputs/*
 logs/
 *.lock
+
+# Exception: commit the canonical ecommerce demo cases as project samples.
+# Ignore everything directly under outputs/ and under outputs/ecommerce/,
+# but re-include the demo-cases/ subtree so it can be tracked.
+!outputs/ecommerce/
+outputs/ecommerce/*
+!outputs/ecommerce/demo-cases/
+!outputs/ecommerce/demo-cases/**
 
 # Ignore unrelated tool configs
 .codex/
