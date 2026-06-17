@@ -200,6 +200,10 @@ frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 app.mount("/static", StaticFiles(directory=os.path.join(frontend_dir, "static")), name="static")  # 正经注释：挂载 /static 静态资源路由 / 大白话注释：让 /static/ 路径能访问前端静态文件
 app.mount("/site", StaticFiles(directory=frontend_dir), name="site")  # 正经注释：挂载 /site 前端路由 / 大白话注释：让 /site 路径能访问前端页面
 
+# EcomResearcher 路由：跨境电商选品研究 API + WebSocket（独立模块，不侵入主路由）
+from server.ecommerce_api import router as ecommerce_router  # 正经注释：导入跨境电商路由 / 大白话注释：把电商研究的接口拿进来
+app.include_router(ecommerce_router)  # 正经注释：注册电商路由 / 大白话注释：把电商接口挂到主应用
+
 # WebSocket manager
 manager = WebSocketManager()  # 正经注释：创建 WebSocket 管理器实例 / 大白话注释：把"前台接待员"叫来
 

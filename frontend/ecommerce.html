@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EcomResearcher · 跨境电商选品助手</title>
+<!-- Markdown 渲染 + 雷达图（演示用 CDN，需联网） -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --border:#334155; --txt:#e2e8f0; --mut:#94a3b8; --acc:#38bdf8; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; line-height:1.6; }
+  header { padding:20px 28px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  header h1 { font-size:20px; margin:0; }
+  header .sub { color:var(--mut); font-size:13px; }
+  main { max-width:1100px; margin:0 auto; padding:24px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:18px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:820px){ .grid2{ grid-template-columns:1fr; } }
+  label { display:block; font-size:13px; color:var(--mut); margin:10px 0 4px; }
+  input, select { width:100%; padding:10px 12px; background:#0b1220; border:1px solid var(--border); border-radius:8px; color:var(--txt); font-size:14px; }
+  button { background:var(--acc); color:#06283d; border:none; border-radius:8px; padding:11px 18px; font-weight:600; cursor:pointer; font-size:14px; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:140px; }
+  .checks { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; background:#0b1220; border:1px solid var(--border); }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  /* 进度时间线 */
+  #timeline { list-style:none; padding:0; margin:0; }
+  #timeline li { padding:7px 0 7px 22px; position:relative; color:var(--mut); font-size:14px; }
+  #timeline li::before { content:""; position:absolute; left:4px; top:11px; width:9px; height:9px; border-radius:50%; background:var(--border); }
+  #timeline li.active { color:var(--txt); }
+  #timeline li.active::before { background:var(--acc); }
+  #timeline li.done::before { background:var(--ok); }
+  /* 评分 */
+  .score-big { font-size:42px; font-weight:700; color:var(--acc); }
+  .score-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px; }
+  .score-grid div { background:#0b1220; border-radius:8px; padding:8px; text-align:center; }
+  .score-grid .k { font-size:12px; color:var(--mut); }
+  .score-grid .v { font-size:18px; font-weight:600; }
+  /* audit */
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { padding:7px 8px; text-align:left; border-bottom:1px solid var(--border); }
+  th { color:var(--mut); font-weight:500; }
+  /* report */
+  #report { font-size:14px; }
+  #report h1,#report h2 { border-bottom:1px solid var(--border); padding-bottom:6px; }
+  #report a { color:var(--acc); }
+  #report ul { padding-left:20px; }
+  .hidden { display:none; }
+  .err { color:var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛒 EcomResearcher</h1>
+  <span class="sub">跨境电商 AI 选品与市场调研助手 · 多 Agent 工作流</span>
+</header>
+
+<main>
+  <!-- 输入 -->
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>品类关键词</label>
+        <input id="query" placeholder="例如 portable blender" value="portable blender" />
+      </div>
+      <div style="flex:0 0 120px;">
+        <label>目标市场</label>
+        <select id="market"><option>US</option><option>UK</option><option>DE</option><option>JP</option></select>
+      </div>
+      <div style="flex:0 0 130px;">
+        <label>调研深度</label>
+        <select id="depth"><option value="fast">fast</option><option value="standard" selected>standard</option><option value="deep">deep</option></select>
+      </div>
+      <div style="flex:0 0 150px;">
+        <label>后端地址</label>
+        <input id="host" value="localhost:8000" />
+      </div>
+      <div style="flex:0 0 auto;">
+        <button id="runBtn">开始调研</button>
+      </div>
+    </div>
+    <div class="checks" style="margin-top:12px;">
+      <label style="margin:0; display:flex; align-items:center; gap:6px;">
+        <input type="checkbox" id="useLlm" checked style="width:auto;" /> 启用 LLM 打分（关闭则纯规则）
+      </label>
+      <span class="pill" id="connState">未连接</span>
+    </div>
+  </div>
+
+  <!-- 进度 -->
+  <div class="card hidden" id="progressCard">
+    <strong>执行进度</strong>
+    <ul id="timeline"></ul>
+  </div>
+
+  <div class="grid2 hidden" id="resultGrid">
+    <!-- 评分 -->
+    <div class="card">
+      <strong>机会评分</strong> <span class="pill" id="scoredBy"></span>
+      <div style="display:flex; align-items:center; gap:16px; margin-top:8px;">
+        <div class="score-big" id="overallScore">-</div>
+        <div>
+          <div id="recommendation" class="mut" style="color:var(--mut);"></div>
+        </div>
+      </div>
+      <div class="score-grid" id="scoreGrid"></div>
+      <canvas id="radar" height="220" style="margin-top:12px;"></canvas>
+    </div>
+    <!-- 质检 + audit -->
+    <div class="card">
+      <strong>质量检查</strong>
+      <div id="quality" style="margin:8px 0;"></div>
+      <strong style="display:block; margin-top:8px;">Agent 执行链路</strong>
+      <table>
+        <thead><tr><th>Agent</th><th>状态</th><th>耗时(ms)</th><th>数据源</th></tr></thead>
+        <tbody id="auditBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 报告 -->
+  <div class="card hidden" id="reportCard">
+    <strong>选品调研报告</strong>
+    <div id="report" style="margin-top:10px;"></div>
+  </div>
+</main>
+
+<script>
+const STAGES = ["start","planner_done","research_running","research_done","scoring_done","report_done","quality_done","done"];
+const STAGE_LABEL = {
+  start:"开始调研", planner_done:"规划完成（生成查询）", research_running:"并发研究中（趋势/竞品/评论）",
+  research_done:"研究完成", scoring_done:"机会评分完成", report_done:"报告生成完成",
+  quality_done:"质量检查完成", done:"全部完成"
+};
+let radarChart = null;
+
+const $ = (id) => document.getElementById(id);
+
+function setConn(text, cls){ const e=$("connState"); e.textContent=text; e.className="pill "+(cls||""); }
+
+function resetUI(){
+  $("progressCard").classList.add("hidden");
+  $("resultGrid").classList.add("hidden");
+  $("reportCard").classList.add("hidden");
+  $("timeline").innerHTML="";
+}
+
+function renderTimeline(currentEvent){
+  const ul = $("timeline");
+  const idx = STAGES.indexOf(currentEvent);
+  ul.innerHTML = STAGES.map((s,i)=>{
+    let cls = i < idx ? "done" : (i===idx ? "active":"");
+    return `<li class="${cls}">${STAGE_LABEL[s]||s}</li>`;
+  }).join("");
+}
+
+function addStage(event, payload){
+  $("progressCard").classList.remove("hidden");
+  renderTimeline(event);
+}
+
+function renderScore(score){
+  $("scoredBy").textContent = "评分方式："+ (score.scored_by||"rule");
+  $("overallScore").textContent = (score.overall_score??"-") + " / 10";
+  $("recommendation").textContent = score.recommendation||"";
+  const dims = [
+    ["趋势",score.trend_score],["竞争",score.competition_score],["痛点",score.pain_point_score],
+    ["利润",score.margin_score],["风险",score.risk_score],["证据",score.evidence_score]
+  ];
+  $("scoreGrid").innerHTML = dims.map(([k,v])=>`<div><div class="k">${k}</div><div class="v">${v?? "-"}</div></div>`).join("");
+  // 雷达图
+  const ctx = $("radar");
+  if(radarChart) radarChart.destroy();
+  radarChart = new Chart(ctx, {
+    type:"radar",
+    data:{ labels:dims.map(d=>d[0]), datasets:[{ label:"评分", data:dims.map(d=>d[1]??0), fill:true, backgroundColor:"rgba(56,189,248,.2)", borderColor:"#38bdf8", pointBackgroundColor:"#38bdf8" }] },
+    options:{ plugins:{legend:{display:false}}, scales:{ r:{ min:0, max:10, ticks:{display:false}, grid:{color:"#334155"}, angleLines:{color:"#334155"}, pointLabels:{color:"#94a3b8"} } } }
+  });
+}
+
+function renderQuality(qc){
+  const passed = qc.passed;
+  $("quality").innerHTML = `
+    <span class="pill ${passed?'ok':'bad'}">${passed?'质检通过':'质检未通过'}</span>
+    <div style="margin-top:8px; font-size:13px; color:var(--mut);">
+      引用覆盖率 ${(qc.citation_coverage*100).toFixed(0)}% ·
+      证据充分度 ${(qc.evidence_sufficiency*100).toFixed(0)}% ·
+      风险披露 ${qc.risk_disclosure?'是':'否'}
+    </div>
+    ${qc.issues && qc.issues.length ? `<div class="warn" style="margin-top:6px;">问题：${qc.issues.join("；")}</div>`:""}
+  `;
+}
+
+function renderAudit(audit){
+  $("auditBody").innerHTML = (audit||[]).map(a=>{
+    const cls = a.status==="success"?"ok":(a.status==="partial"?"warn":"bad");
+    return `<tr><td>${a.agent}</td><td class="${cls}">${a.status}</td><td>${a.duration_ms?? "-"}</td><td>${a.source_count?? "-"}</td></tr>`;
+  }).join("");
+}
+
+function renderReport(md){
+  $("reportCard").classList.remove("hidden");
+  const html = marked.parse(md || "");
+  $("report").innerHTML = DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+  });
+}
+
+function showError(msg){ const e=document.createElement("div"); e.className="card err"; e.textContent=msg; document.querySelector("main").appendChild(e); }
+
+$("runBtn").addEventListener("click", () => {
+  const query = $("query").value.trim();
+  if(!query){ alert("请输入品类关键词"); return; }
+  resetUI();
+  const host = $("host").value.trim();
+  const wsUrl = `ws://${host}/ws/ecommerce`;
+  let ws;
+  try { ws = new WebSocket(wsUrl); } catch(e){ showError("WebSocket 连接失败："+e); return; }
+  setConn("连接中…","warn");
+  $("runBtn").disabled = true;
+
+  ws.onopen = () => {
+    setConn("已连接","ok");
+    ws.send(JSON.stringify({
+      query,
+      target_market: $("market").value,
+      depth: $("depth").value,
+      use_llm: $("useLlm").checked
+    }));
+  };
+  ws.onmessage = (evt) => {
+    const data = JSON.parse(evt.data);
+    const event = data.event;
+    if(event === "done"){
+      addStage("done");
+      $("resultGrid").classList.remove("hidden");
+      renderScore(data.opportunity_score || {});
+      renderQuality(data.quality_check || {});
+      renderAudit(data.audit_log || []);
+      renderReport(data.report || "");
+      setConn("完成","ok");
+      $("runBtn").disabled = false;
+      ws.close();
+    } else if(event === "error"){
+      setConn("错误","bad");
+      showError("服务端错误："+data.error);
+      $("runBtn").disabled = false;
+    } else {
+      addStage(event, data);
+      setConn("执行中… "+(STAGE_LABEL[event]||event),"warn");
+    }
+  };
+  ws.onerror = () => { setConn("连接错误","bad"); showError("WebSocket 错误，请确认后端地址和是否已启动（默认 localhost:8000）"); $("runBtn").disabled=false; };
+  ws.onclose = () => { if($("connState").textContent!=="完成" && $("connState").textContent!=="错误"){ setConn("已断开","warn"); } $("runBtn").disabled=false; };
+});
+</script>
+</body>
+</html>

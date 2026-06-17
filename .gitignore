@@ -15,7 +15,12 @@ venv.bak/
 
 #Ignore generated outputs
 outputs/
+logs/
 *.lock
+
+# Ignore unrelated tool configs
+.codex/
+AGENTS.md
 dist/
 gpt_researcher.egg-info/
 
