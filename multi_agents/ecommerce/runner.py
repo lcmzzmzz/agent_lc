@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from multi_agents.ecommerce.graph import run_ecommerce_graph
+from multi_agents.ecommerce.llm_helper import LlmFn
 from multi_agents.ecommerce.state import EcommerceResearchState, create_initial_state
 from multi_agents.ecommerce.tools.product_search import SearchFn
 
@@ -64,8 +65,13 @@ async def run_ecommerce_research(
     depth: str = "standard",
     output_dir: str | Path = "outputs/ecommerce",
     search_fn: SearchFn | None = None,
+    llm_fn: LlmFn | None = None,
 ) -> EcommerceResearchState:
     """端到端跑一次跨境电商选品调研，并写出三类文件。
+
+    Args:
+        llm_fn: 注入的 LLM 函数，启用后 opportunity_scorer 会优先用 LLM 打分。
+            默认 None（纯规则模式，不消耗 LLM 额度）。
 
     Returns:
         最终 state（含 final_report / quality_check / audit_log / output_paths）。
@@ -80,6 +86,7 @@ async def run_ecommerce_research(
     final_state = await run_ecommerce_graph(
         state,
         search_fn=search_fn or default_search_fn,
+        llm_fn=llm_fn,
     )
 
     output_path = Path(output_dir)

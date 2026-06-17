@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+from multi_agents.ecommerce.llm_helper import default_llm_fn
 from multi_agents.ecommerce.runner import run_ecommerce_research
 
 
@@ -36,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["fast", "standard", "deep"],
         help="调研深度，默认 standard",
     )
+    parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="禁用 LLM 打分，退回纯规则模式（不消耗 LLM 额度）",
+    )
     return parser
 
 
@@ -56,6 +62,7 @@ def main() -> None:
             target_market=args.market,
             platforms=[p.strip() for p in args.platforms.split(",") if p.strip()],
             depth=args.depth,
+            llm_fn=None if args.no_llm else default_llm_fn,
         )
     )
 

@@ -3,15 +3,15 @@ EcomResearcher 工作流编排。
 
 【正经注释】
 run_ecommerce_graph 把 7 个 Agent 串成一条流水线：
-planner(同步) → [trend, competitor, review] 并发 → opportunity_scoring →
+planner(同步) → [trend, competitor, review] 并发 → opportunity_scoring(LLM优先) →
 report_writer → quality_reviewer。
 三个研究节点并发执行，各自持有独立子状态（独立 audit_log/errors），
 避免共享可变集合在协程间交错；并发结束后由本函数统一合并结果与日志。
+opportunity_scoring 为异步节点，支持注入 llm_fn 做智能打分。
 
 【大白话注释】
-这一步是把前面写好的 7 个角色按顺序排好、连起来：
-先规划，再让趋势/竞品/评论三个角色同时干活，最后评分、写报告、做质量检查。
-三个角色同时干的时候，各自记自己的日志，互不打架，最后再汇总。
+把 7 个角色按顺序连起来：先规划，再让趋势/竞品/评论三个角色同时干活，
+然后评分（能用大模型就用大模型）、写报告、做质量检查。
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from multi_agents.ecommerce.agents.quality_reviewer import run_quality_review
 from multi_agents.ecommerce.agents.report_writer import run_report_writer
 from multi_agents.ecommerce.agents.review_insight import run_review_insight
 from multi_agents.ecommerce.agents.trend_researcher import run_trend_research
+from multi_agents.ecommerce.llm_helper import LlmFn
 from multi_agents.ecommerce.state import EcommerceResearchState
 from multi_agents.ecommerce.tools.product_search import SearchFn
 
@@ -46,6 +47,7 @@ async def run_ecommerce_graph(
     state: EcommerceResearchState,
     *,
     search_fn: SearchFn,
+    llm_fn: LlmFn | None = None,
 ) -> EcommerceResearchState:
     # 1. 规划
     state = run_planner(state)
@@ -68,8 +70,8 @@ async def run_ecommerce_graph(
     state["errors"].extend(competitor_state["errors"])
     state["errors"].extend(review_state["errors"])
 
-    # 3. 汇总评分
-    state = run_opportunity_scoring(state)
+    # 3. 汇总评分（LLM 优先，规则兜底）
+    state = await run_opportunity_scoring(state, llm_fn=llm_fn)
     # 4. 写报告
     state = run_report_writer(state)
     # 5. 质量检查

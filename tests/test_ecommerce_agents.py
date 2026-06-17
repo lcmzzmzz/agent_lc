@@ -1,4 +1,4 @@
-"""EcomResearcher 7 个 Agent 的单测（注入 fake_search，不触网）。"""
+"""EcomResearcher 7 个 Agent 的单测（注入 fake_search / fake_llm，不触网）。"""
 
 import pytest
 
@@ -20,6 +20,14 @@ async def fake_search(query: str, max_results: int):
             "body": "Customers complain about battery life. Price is around $30. Demand is growing.",
         }
     ]
+
+
+async def fake_llm(system: str, user: str) -> str:
+    """返回评分 JSON 的假 LLM。"""
+    return (
+        '{"trend_score": 8.5, "competition_score": 5.0, "pain_point_score": 9.0, '
+        '"margin_score": 7.0, "risk_score": 6.0, "reasons": ["需求旺盛", "痛点集中"]}'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -119,16 +127,43 @@ def build_ready_state():
     return state
 
 
-def test_run_opportunity_scoring_adds_score():
-    state = run_opportunity_scoring(build_ready_state())
+@pytest.mark.asyncio
+async def test_run_opportunity_scoring_rule_mode():
+    state = await run_opportunity_scoring(build_ready_state())
 
     assert state["opportunity_score"]["overall_score"] > 0
     assert state["opportunity_score"]["recommendation"]
+    assert state["opportunity_score"]["scored_by"] == "rule"
     assert state["audit_log"][-1]["agent"] == "OpportunityScoringAgent"
 
 
-def test_run_report_writer_creates_markdown():
-    state = run_report_writer(run_opportunity_scoring(build_ready_state()))
+@pytest.mark.asyncio
+async def test_run_opportunity_scoring_uses_llm():
+    state = await run_opportunity_scoring(build_ready_state(), llm_fn=fake_llm)
+
+    score = state["opportunity_score"]
+    assert score["scored_by"] == "llm"
+    # fake_llm 给的 trend_score=8.5 应被采用
+    assert score["trend_score"] == 8.5
+    assert "需求旺盛" in score["reasons"]
+    # overall 仍由加权公式重算，落在合理区间
+    assert 0.0 <= score["overall_score"] <= 10.0
+
+
+@pytest.mark.asyncio
+async def test_run_opportunity_scoring_llm_failure_falls_back_to_rule():
+    async def bad_llm(system, user):
+        raise RuntimeError("llm down")
+
+    state = await run_opportunity_scoring(build_ready_state(), llm_fn=bad_llm)
+
+    assert state["opportunity_score"]["scored_by"] == "rule"
+    assert state["audit_log"][-1]["warning"] == "llm scoring unavailable, fallback to rule"
+
+
+@pytest.mark.asyncio
+async def test_run_report_writer_creates_markdown():
+    state = run_report_writer(await run_opportunity_scoring(build_ready_state()))
 
     assert "# 跨境电商选品调研报告" in state["final_report"]
     assert "市场趋势分析" in state["final_report"]
@@ -136,9 +171,10 @@ def test_run_report_writer_creates_markdown():
     assert "风险因素" in state["final_report"]
 
 
-def test_run_quality_review_adds_quality_check():
+@pytest.mark.asyncio
+async def test_run_quality_review_adds_quality_check():
     state = run_quality_review(
-        run_report_writer(run_opportunity_scoring(build_ready_state()))
+        run_report_writer(await run_opportunity_scoring(build_ready_state()))
     )
 
     assert "citation_coverage" in state["quality_check"]
@@ -147,9 +183,11 @@ def test_run_quality_review_adds_quality_check():
 
 
 def test_quality_review_flags_overconfident_terms():
-    state = run_opportunity_scoring(build_ready_state())
+    state = create_initial_state("portable blender")
+    state["trend_result"] = {"evidence": []}
+    state["competitor_result"] = {"evidence": []}
+    state["review_result"] = {"evidence": []}
     state["final_report"] = "稳赚必爆，没有风险。"
-    # 重新评分后报告被覆盖，这里直接注入坏报告再审查
     updated = run_quality_review(state)
 
     assert updated["quality_check"]["passed"] is False

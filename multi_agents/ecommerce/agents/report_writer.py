@@ -59,6 +59,17 @@ def run_report_writer(state: EcommerceResearchState) -> EcommerceResearchState:
         f"- {item}" for item in section_5_items
     )
 
+    reasons = score.get("reasons") or ["暂无"]
+    section_8 = (
+        "## 8. 机会评分\n"
+        f"- 总分：{score.get('overall_score', 0)} / 10（评分方式：{score.get('scored_by', 'rule')}）\n"
+        f"- 趋势分：{score.get('trend_score', 0)}\n"
+        f"- 竞争分：{score.get('competition_score', 0)}\n"
+        f"- 痛点分：{score.get('pain_point_score', 0)}\n"
+        f"- 证据充分度：{score.get('evidence_score', 0)}\n"
+        "评分理由：\n- " + "\n- ".join(reasons)
+    )
+
     report = "\n\n".join(
         [
             build_report_title(state["query"], state["target_market"]),
@@ -79,12 +90,7 @@ def run_report_writer(state: EcommerceResearchState) -> EcommerceResearchState:
             "- 平台评论和搜索结果存在样本偏差。\n"
             "- 真实利润需结合采购、物流、广告和售后成本验证。\n"
             "- 不应将本报告结论视为销量预测。",
-            "## 8. 机会评分\n"
-            f"- 总分：{score.get('overall_score', 0)} / 10\n"
-            f"- 趋势分：{score.get('trend_score', 0)}\n"
-            f"- 竞争分：{score.get('competition_score', 0)}\n"
-            f"- 痛点分：{score.get('pain_point_score', 0)}\n"
-            f"- 证据充分度：{score.get('evidence_score', 0)}",
+            section_8,
             "## 9. 是否建议进入\n"
             f"{score.get('recommendation', '暂不建议进入，需补充数据验证')}",
             "## 10. 数据来源与引用\n" + "\n".join(collect_citation_lines(state)),
