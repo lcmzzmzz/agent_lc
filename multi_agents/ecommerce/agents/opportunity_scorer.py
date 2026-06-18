@@ -20,6 +20,7 @@ import time
 
 from multi_agents.ecommerce.llm_helper import LlmFn, clamp, llm_json
 from multi_agents.ecommerce.prompts import OPPORTUNITY_SCORER_SYSTEM_PROMPT
+from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
 from multi_agents.ecommerce.schemas.scoring import calculate_overall_score
 from multi_agents.ecommerce.state import EcommerceResearchState
 
@@ -59,6 +60,7 @@ async def run_opportunity_scoring(
     state: EcommerceResearchState,
     *,
     llm_fn: LlmFn | None = None,
+    budget_manager: BudgetManager | None = None,
 ) -> EcommerceResearchState:
     started = time.perf_counter()
 
@@ -70,10 +72,17 @@ async def run_opportunity_scoring(
     risk_score = 5.0
     evidence_score, evidence_count = _rule_evidence_score(state)
 
+    # 预算闸门：LLM 预算耗尽则强制降级为规则评分，并记录降级事件。
+    if llm_fn is not None and budget_manager is not None and not budget_manager.can_use("llm"):
+        budget_manager.record_degradation("OpportunityScoringAgent", "llm budget exceeded")
+        llm_fn = None
+
     # LLM 打分（可用则覆盖五维分 + 理由；evidence_score 仍走规则）
     used_llm = False
     llm_reasons: list[str] | None = None
     if llm_fn is not None:
+        if budget_manager is not None:
+            budget_manager.record("llm")
         user = (
             f"品类：{state['query']}（市场：{state['target_market']}）\n"
             f"趋势摘要：{state['trend_result'].get('summary', '')}\n"

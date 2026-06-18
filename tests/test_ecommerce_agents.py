@@ -266,3 +266,29 @@ def test_quality_review_flags_overconfident_terms():
 
     assert updated["quality_check"]["passed"] is False
     assert any("过度确定性" in issue for issue in updated["quality_check"]["issues"])
+
+
+@pytest.mark.asyncio
+async def test_opportunity_scoring_skips_llm_when_budget_exhausted():
+    from multi_agents.ecommerce.runtime.budget_manager import BudgetConfig, BudgetManager
+    from multi_agents.ecommerce.runtime.telemetry import empty_governance_state
+
+    state = build_ready_state()
+    state["governance"] = empty_governance_state()
+    budget = BudgetManager(state["governance"], BudgetConfig(max_llm_calls=0))
+    called = False
+
+    async def llm_should_not_run(system, user):
+        nonlocal called
+        called = True
+        return '{"trend_score":10}'
+
+    updated = await run_opportunity_scoring(
+        state,
+        llm_fn=llm_should_not_run,
+        budget_manager=budget,
+    )
+
+    assert called is False
+    assert updated["opportunity_score"]["scored_by"] == "rule"
+    assert updated["governance"]["budget_exceeded"] is True

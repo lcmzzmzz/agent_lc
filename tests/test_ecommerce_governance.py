@@ -141,3 +141,25 @@ def test_tool_permission_boundaries():
     assert_tool_allowed("TrendResearchAgent", "search")
     with pytest.raises(PolicyViolation):
         assert_tool_allowed("ReportWriterAgent", "search")
+
+
+from multi_agents.ecommerce.runtime.budget_manager import (
+    BudgetConfig,
+    BudgetManager,
+)
+
+
+def test_budget_manager_tracks_usage_and_limits():
+    governance = empty_governance_state()
+    budget = BudgetManager(governance, BudgetConfig(max_llm_calls=1, max_search_calls=2))
+
+    assert budget.can_use("llm") is True
+    budget.record("llm")
+    assert governance["usage"]["llm_call_count"] == 1
+    assert budget.can_use("llm") is False
+
+    budget.record_degradation("OpportunityScoringAgent", "llm budget exceeded")
+    summary = summarize_governance(governance)
+
+    assert summary["budget_exceeded"] is True
+    assert summary["degraded_by_budget"] is True

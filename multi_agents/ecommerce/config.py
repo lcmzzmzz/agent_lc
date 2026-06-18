@@ -13,8 +13,11 @@ EcomResearcher 深度档位配置。
 
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from typing import Any
+
+from multi_agents.ecommerce.runtime.budget_manager import BudgetConfig
 
 DEPTH_CONFIGS: dict[str, dict[str, Any]] = {
     "fast": {
@@ -45,3 +48,21 @@ def get_depth_config(depth: str) -> dict[str, Any]:
     【大白话注释】要哪一档就给哪一档；名字写错了就按标准档来。
     """
     return deepcopy(DEPTH_CONFIGS.get(depth, DEPTH_CONFIGS["standard"]))
+
+
+def get_budget_config() -> BudgetConfig:
+    """从环境变量读取预算配置；未设置则用 BudgetConfig 默认值。
+
+    【正经注释】所有键都给默认值，缺省即等价于 BudgetConfig()。
+    支持的环境变量：ECOMMERCE_MAX_LLM_CALLS / ECOMMERCE_MAX_SEARCH_CALLS /
+    ECOMMERCE_MAX_SCRAPE_CALLS / ECOMMERCE_MAX_EXTERNAL_API_CALLS /
+    ECOMMERCE_MAX_ESTIMATED_COST_USD。
+    【大白话注释】预算能从环境变量调；不设就用默认值。
+    """
+    return BudgetConfig(
+        max_llm_calls=int(os.environ.get("ECOMMERCE_MAX_LLM_CALLS", "20")),
+        max_search_calls=int(os.environ.get("ECOMMERCE_MAX_SEARCH_CALLS", "80")),
+        max_scrape_calls=int(os.environ.get("ECOMMERCE_MAX_SCRAPE_CALLS", "20")),
+        max_external_api_calls=int(os.environ.get("ECOMMERCE_MAX_EXTERNAL_API_CALLS", "20")),
+        max_estimated_cost_usd=float(os.environ.get("ECOMMERCE_MAX_ESTIMATED_COST_USD", "1.0")),
+    )
