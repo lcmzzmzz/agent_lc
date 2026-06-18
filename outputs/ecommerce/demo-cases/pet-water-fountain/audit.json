@@ -8,17 +8,9 @@
     "warning": null
   },
   {
-    "agent": "TrendResearchAgent",
-    "status": "success",
-    "duration_ms": 20464,
-    "source_count": 6,
-    "confidence": 0.9,
-    "warning": null
-  },
-  {
     "agent": "CompetitorAnalysisAgent",
     "status": "success",
-    "duration_ms": 21016,
+    "duration_ms": 22309,
     "source_count": 6,
     "confidence": 0.9,
     "warning": null
@@ -26,15 +18,30 @@
   {
     "agent": "ReviewInsightAgent",
     "status": "success",
-    "duration_ms": 22965,
+    "duration_ms": 22310,
     "source_count": 6,
-    "confidence": 0.54,
+    "confidence": 0.78,
+    "warning": null,
+    "review_source": "web_fallback",
+    "search_keyword": "pet water fountain",
+    "review_count": 9,
+    "platforms": [
+      "amazon"
+    ],
+    "fallback_reason": "no APIFY_API_TOKEN, using Tavily fallback"
+  },
+  {
+    "agent": "TrendResearchAgent",
+    "status": "success",
+    "duration_ms": 19951,
+    "source_count": 6,
+    "confidence": 0.9,
     "warning": null
   },
   {
     "agent": "OpportunityScoringAgent",
     "status": "success",
-    "duration_ms": 3496,
+    "duration_ms": 5323,
     "source_count": 18,
     "confidence": 0.9,
     "warning": null
@@ -43,7 +50,7 @@
     "agent": "EcommerceReportWriterAgent",
     "status": "success",
     "duration_ms": 0,
-    "source_count": 17,
+    "source_count": 18,
     "confidence": 0.8,
     "warning": null
   },

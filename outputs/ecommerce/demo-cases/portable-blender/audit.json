@@ -8,17 +8,9 @@
     "warning": null
   },
   {
-    "agent": "TrendResearchAgent",
-    "status": "success",
-    "duration_ms": 11880,
-    "source_count": 6,
-    "confidence": 0.9,
-    "warning": null
-  },
-  {
     "agent": "CompetitorAnalysisAgent",
     "status": "success",
-    "duration_ms": 12605,
+    "duration_ms": 14294,
     "source_count": 6,
     "confidence": 0.9,
     "warning": null
@@ -26,15 +18,30 @@
   {
     "agent": "ReviewInsightAgent",
     "status": "success",
-    "duration_ms": 19024,
+    "duration_ms": 24011,
     "source_count": 6,
-    "confidence": 0.54,
+    "confidence": 0.78,
+    "warning": null,
+    "review_source": "web_fallback",
+    "search_keyword": "portable blender",
+    "review_count": 13,
+    "platforms": [
+      "amazon"
+    ],
+    "fallback_reason": "no APIFY_API_TOKEN, using Tavily fallback"
+  },
+  {
+    "agent": "TrendResearchAgent",
+    "status": "success",
+    "duration_ms": 13578,
+    "source_count": 6,
+    "confidence": 0.9,
     "warning": null
   },
   {
     "agent": "OpportunityScoringAgent",
     "status": "success",
-    "duration_ms": 5849,
+    "duration_ms": 5060,
     "source_count": 18,
     "confidence": 0.9,
     "warning": null

@@ -20,12 +20,13 @@
 
 | Case | 总分 | 证据数 | 降级数 | 置信度 | 质检 |
 |------|------|--------|--------|--------|------|
-| portable-blender | 7.1 | 18 | 0 | 0.84 | 通过 |
-| pet-water-fountain | 6.5 | 18 | 0 | 0.84 | 通过 |
-| standing-desk | 6.82 | 30 | 0 | 0.88 | 通过 |
+| portable-blender | 6.92 | 18 | 0 | 0.88 | 通过 |
+| pet-water-fountain | 7.62 | 18 | 0 | 0.88 | 通过 |
+| standing-desk | 6.76 | 25 | 0 | 0.85 | 通过 |
 
 数据见 `outputs/ecommerce/demo-cases/*/evaluation.json`，可用 `python scripts/export_ecommerce_demo_cases.py` 复现。
 全链路日志：`logs/ecommerce/<时间戳>_<关键词>.log`。
+三个 case 均走 Tavily（`review_source=web_fallback`）；evaluation.json 还含 governance 字段（llm/search 调用数、estimated_cost、降级/失败计数）。
 
 ## 面试可讲的工程点
 

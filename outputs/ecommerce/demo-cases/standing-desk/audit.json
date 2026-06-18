@@ -8,17 +8,9 @@
     "warning": null
   },
   {
-    "agent": "TrendResearchAgent",
-    "status": "success",
-    "duration_ms": 23950,
-    "source_count": 10,
-    "confidence": 0.9,
-    "warning": null
-  },
-  {
     "agent": "CompetitorAnalysisAgent",
     "status": "success",
-    "duration_ms": 27806,
+    "duration_ms": 26992,
     "source_count": 10,
     "confidence": 0.9,
     "warning": null
@@ -26,16 +18,31 @@
   {
     "agent": "ReviewInsightAgent",
     "status": "success",
-    "duration_ms": 30447,
+    "duration_ms": 15552,
+    "source_count": 5,
+    "confidence": 0.62,
+    "warning": null,
+    "review_source": "web_fallback",
+    "search_keyword": "standing desk",
+    "review_count": 7,
+    "platforms": [
+      "amazon"
+    ],
+    "fallback_reason": "no APIFY_API_TOKEN, using Tavily fallback"
+  },
+  {
+    "agent": "TrendResearchAgent",
+    "status": "success",
+    "duration_ms": 24983,
     "source_count": 10,
-    "confidence": 0.78,
+    "confidence": 0.9,
     "warning": null
   },
   {
     "agent": "OpportunityScoringAgent",
     "status": "success",
-    "duration_ms": 4338,
-    "source_count": 30,
+    "duration_ms": 5420,
+    "source_count": 25,
     "confidence": 0.9,
     "warning": null
   },
@@ -43,7 +50,7 @@
     "agent": "EcommerceReportWriterAgent",
     "status": "success",
     "duration_ms": 0,
-    "source_count": 30,
+    "source_count": 24,
     "confidence": 0.8,
     "warning": null
   },
@@ -51,7 +58,7 @@
     "agent": "QualityReviewerAgent",
     "status": "success",
     "duration_ms": 0,
-    "source_count": 30,
+    "source_count": 25,
     "confidence": 0.8,
     "warning": null
   }

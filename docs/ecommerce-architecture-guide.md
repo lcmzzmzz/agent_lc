@@ -333,16 +333,22 @@ python -m multi_agents.ecommerce --query "portable blender" --market US --depth 
 
 ```python
 {
-  "overall_score": 7.1,
-  "confidence": 0.84,        # 研究节点平均置信度(排除质检)
-  "evidence_count": 18,      # 三方证据总数
-  "fallback_count": 0,       # 非 success 的 agent 数
-  "duration_ms": 42000,
+  "overall_score": 6.92,
+  "confidence": 0.88,          # 研究节点平均置信度(排除质检)
+  "evidence_count": 18,        # 三方证据总数
+  "fallback_count": 0,         # 非 success 的 agent 数
+  "duration_ms": 56943,
   "recommendation": "...",
   "scored_by": "llm",
   "quality_passed": true,
-  "review_source": "apify",   # apify | web_fallback（评论来自哪）
-  "review_count": 12          # 抓到的评论数
+  "review_source": "web_fallback",  # apify | web_fallback（评论来自哪）
+  "review_count": 13,          # 抓到的评论数
+  "failure_count": 0,          # governance: 执行失败次数
+  "retry_count": 0,            # governance: 累计重试次数
+  "policy_block_count": 0,     # governance: 策略拦截次数
+  "llm_call_count": 1,         # governance: LLM 调用次数
+  "search_call_count": 12,     # governance: 检索调用次数
+  "estimated_cost_usd": 0.0    # governance: 累计估算成本
 }
 ```
 供 runner 写 `evaluation.json`、demo 导出、评估对比页统一消费。

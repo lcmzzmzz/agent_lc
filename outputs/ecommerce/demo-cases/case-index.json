@@ -13,18 +13,29 @@
     "evaluation": "/outputs/ecommerce/demo-cases/portable-blender/evaluation.json",
     "audit": "/outputs/ecommerce/demo-cases/portable-blender/audit.json",
     "quality": "/outputs/ecommerce/demo-cases/portable-blender/quality.json",
-    "started_at": "2026-06-18T04:41:41",
-    "finished_at": "2026-06-18T04:42:06",
     "summary": {
-      "overall_score": 7.1,
-      "confidence": 0.84,
+      "overall_score": 6.92,
+      "confidence": 0.88,
       "evidence_count": 18,
       "fallback_count": 0,
-      "duration_ms": 49358,
+      "duration_ms": 56943,
       "recommendation": "建议谨慎测试进入",
       "scored_by": "llm",
-      "quality_passed": true
-    }
+      "quality_passed": true,
+      "review_source": "web_fallback",
+      "review_count": 13,
+      "failure_count": 0,
+      "retry_count": 0,
+      "policy_block_count": 0,
+      "budget_exceeded": false,
+      "degraded_by_budget": false,
+      "llm_call_count": 1,
+      "search_call_count": 12,
+      "external_api_call_count": 0,
+      "estimated_cost_usd": 0.0
+    },
+    "started_at": "2026-06-18T20:16:28",
+    "finished_at": "2026-06-18T20:16:57"
   },
   {
     "slug": "pet-water-fountain",
@@ -40,18 +51,29 @@
     "evaluation": "/outputs/ecommerce/demo-cases/pet-water-fountain/evaluation.json",
     "audit": "/outputs/ecommerce/demo-cases/pet-water-fountain/audit.json",
     "quality": "/outputs/ecommerce/demo-cases/pet-water-fountain/quality.json",
-    "started_at": "2026-06-18T04:42:06",
-    "finished_at": "2026-06-18T04:42:32",
     "summary": {
-      "overall_score": 6.5,
-      "confidence": 0.84,
+      "overall_score": 7.62,
+      "confidence": 0.88,
       "evidence_count": 18,
       "fallback_count": 0,
-      "duration_ms": 67941,
-      "recommendation": "建议谨慎测试进入",
+      "duration_ms": 69893,
+      "recommendation": "建议进入，但需要先做小规模测试",
       "scored_by": "llm",
-      "quality_passed": true
-    }
+      "quality_passed": true,
+      "review_source": "web_fallback",
+      "review_count": 9,
+      "failure_count": 0,
+      "retry_count": 0,
+      "policy_block_count": 0,
+      "budget_exceeded": false,
+      "degraded_by_budget": false,
+      "llm_call_count": 1,
+      "search_call_count": 12,
+      "external_api_call_count": 0,
+      "estimated_cost_usd": 0.0
+    },
+    "started_at": "2026-06-18T20:16:57",
+    "finished_at": "2026-06-18T20:17:25"
   },
   {
     "slug": "standing-desk",
@@ -67,17 +89,28 @@
     "evaluation": "/outputs/ecommerce/demo-cases/standing-desk/evaluation.json",
     "audit": "/outputs/ecommerce/demo-cases/standing-desk/audit.json",
     "quality": "/outputs/ecommerce/demo-cases/standing-desk/quality.json",
-    "started_at": "2026-06-18T04:42:32",
-    "finished_at": "2026-06-18T04:43:07",
     "summary": {
-      "overall_score": 6.82,
-      "confidence": 0.88,
-      "evidence_count": 30,
+      "overall_score": 6.76,
+      "confidence": 0.85,
+      "evidence_count": 25,
       "fallback_count": 0,
-      "duration_ms": 86541,
+      "duration_ms": 72947,
       "recommendation": "建议谨慎测试进入",
       "scored_by": "llm",
-      "quality_passed": true
-    }
+      "quality_passed": true,
+      "review_source": "web_fallback",
+      "review_count": 7,
+      "failure_count": 0,
+      "retry_count": 0,
+      "policy_block_count": 0,
+      "budget_exceeded": false,
+      "degraded_by_budget": false,
+      "llm_call_count": 1,
+      "search_call_count": 16,
+      "external_api_call_count": 0,
+      "estimated_cost_usd": 0.0
+    },
+    "started_at": "2026-06-18T20:17:25",
+    "finished_at": "2026-06-18T20:17:57"
   }
 ]

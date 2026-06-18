@@ -1,10 +1,21 @@
 {
-  "overall_score": 6.82,
-  "confidence": 0.88,
-  "evidence_count": 30,
+  "overall_score": 6.76,
+  "confidence": 0.85,
+  "evidence_count": 25,
   "fallback_count": 0,
-  "duration_ms": 86541,
+  "duration_ms": 72947,
   "recommendation": "建议谨慎测试进入",
   "scored_by": "llm",
-  "quality_passed": true
+  "quality_passed": true,
+  "review_source": "web_fallback",
+  "review_count": 7,
+  "failure_count": 0,
+  "retry_count": 0,
+  "policy_block_count": 0,
+  "budget_exceeded": false,
+  "degraded_by_budget": false,
+  "llm_call_count": 1,
+  "search_call_count": 16,
+  "external_api_call_count": 0,
+  "estimated_cost_usd": 0.0
 }
