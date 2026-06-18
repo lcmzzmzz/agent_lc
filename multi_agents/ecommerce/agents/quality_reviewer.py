@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import time
 
+from multi_agents.ecommerce.agents.audit import finalize_audit
 from multi_agents.ecommerce.state import EcommerceResearchState
 
 OVERCONFIDENT_TERMS = ["稳赚", "必爆", "一定增长", "没有风险", "保证成功"]
@@ -66,14 +67,13 @@ def run_quality_review(state: EcommerceResearchState) -> EcommerceResearchState:
         "issues": issues,
     }
 
-    state["audit_log"].append(
-        {
-            "agent": "QualityReviewerAgent",
-            "status": "success" if not issues else "partial",
-            "duration_ms": round((time.perf_counter() - started) * 1000),
-            "source_count": evidence_count,
-            "confidence": 0.8,
-            "warning": "; ".join(issues) if issues else None,
-        }
+    finalize_audit(
+        state,
+        "QualityReviewerAgent",
+        status="success" if not issues else "partial",
+        source_count=evidence_count,
+        confidence=0.8,
+        warning="; ".join(issues) if issues else None,
+        started=started,
     )
     return state

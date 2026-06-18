@@ -22,6 +22,7 @@ from multi_agents.ecommerce.llm_helper import LlmFn, llm_text
 from multi_agents.ecommerce.prompts import COMPETITOR_ANALYZER_SYSTEM_PROMPT
 from multi_agents.ecommerce.state import EcommerceResearchState
 from multi_agents.ecommerce.tools.product_search import SearchFn, search_sources
+from multi_agents.ecommerce.agents.audit import finalize_audit
 
 logger = logging.getLogger(__name__)
 
@@ -147,14 +148,13 @@ async def run_competitor_analysis(
         status = "partial"
         warning = "competitor analysis failed"
 
-    state["audit_log"].append(
-        {
-            "agent": "CompetitorAnalysisAgent",
-            "status": status,
-            "duration_ms": round((time.perf_counter() - started) * 1000),
-            "source_count": len(state["competitor_result"].get("evidence", [])),
-            "confidence": state["competitor_result"].get("confidence", 0.0),
-            "warning": warning,
-        }
+    finalize_audit(
+        state,
+        "CompetitorAnalysisAgent",
+        status=status,
+        source_count=len(state["competitor_result"].get("evidence", [])),
+        confidence=state["competitor_result"].get("confidence", 0.0),
+        warning=warning,
+        started=started,
     )
     return state

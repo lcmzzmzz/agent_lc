@@ -26,6 +26,7 @@ from multi_agents.ecommerce.llm_helper import LlmFn, llm_json, llm_text
 from multi_agents.ecommerce.prompts import REVIEW_INSIGHT_SYSTEM_PROMPT
 from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
 from multi_agents.ecommerce.runtime.telemetry import record_event
+from multi_agents.ecommerce.agents.audit import finalize_audit
 from multi_agents.ecommerce.state import EcommerceResearchState
 from multi_agents.ecommerce.tools.product_search import SearchFn
 from multi_agents.ecommerce.tools.review_scraper import (
@@ -226,20 +227,19 @@ async def run_review_insight(
 
     status = "success" if final_pain_points else "partial"
     warning = None if final_pain_points else "review pain point data limited"
-    state["audit_log"].append(
-        {
-            "agent": "ReviewInsightAgent",
-            "status": status,
-            "duration_ms": round((time.perf_counter() - started) * 1000),
-            "source_count": len(evidence),
-            "confidence": state["review_result"].get("confidence", 0.0),
-            "warning": warning,
-            "review_source": scraper.name,
-            "search_keyword": search_keyword,
-            "review_count": len(items),
-            "platforms": platforms,
-            "fallback_reason": fallback_reason,
-        }
+    finalize_audit(
+        state,
+        "ReviewInsightAgent",
+        status=status,
+        source_count=len(evidence),
+        confidence=state["review_result"].get("confidence", 0.0),
+        warning=warning,
+        started=started,
+        review_source=scraper.name,
+        search_keyword=search_keyword,
+        review_count=len(items),
+        platforms=platforms,
+        fallback_reason=fallback_reason,
     )
     state["errors"].extend(
         [{"agent": "ReviewInsightAgent", "error": str(fr)} for fr in [fallback_reason] if fr and "failed" in str(fr)]

@@ -18,6 +18,7 @@ import time
 from multi_agents.ecommerce.config import get_depth_config
 from multi_agents.ecommerce.state import EcommerceResearchState
 from multi_agents.ecommerce.tools.product_search import build_ecommerce_queries
+from multi_agents.ecommerce.agents.audit import finalize_audit
 
 
 def run_planner(state: EcommerceResearchState) -> EcommerceResearchState:
@@ -54,14 +55,13 @@ def run_planner(state: EcommerceResearchState) -> EcommerceResearchState:
         ],
     }
 
-    state["audit_log"].append(
-        {
-            "agent": "ProductResearchPlannerAgent",
-            "status": "success",
-            "duration_ms": round((time.perf_counter() - started) * 1000),
-            "source_count": 0,
-            "confidence": 1.0,
-            "warning": None,
-        }
+    finalize_audit(
+        state,
+        "ProductResearchPlannerAgent",
+        status="success",
+        source_count=0,
+        confidence=1.0,
+        warning=None,
+        started=started,
     )
     return state

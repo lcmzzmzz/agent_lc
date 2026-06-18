@@ -236,6 +236,19 @@ async def test_run_opportunity_scoring_llm_failure_falls_back_to_rule():
 
 
 @pytest.mark.asyncio
+async def test_opportunity_scoring_confidence_discounted_when_rule_fallback():
+    """LLM 降级到规则时，audit confidence 打折（让评估页能看出评分质量降级）。"""
+    rule_state = await run_opportunity_scoring(build_ready_state())  # 无 llm_fn → rule
+    llm_state = await run_opportunity_scoring(build_ready_state(), llm_fn=fake_llm)
+
+    rule_conf = rule_state["audit_log"][-1]["confidence"]
+    llm_conf = llm_state["audit_log"][-1]["confidence"]
+    # 同 evidence 下 base 一致：rule 的 confidence = llm 的 0.8 倍
+    assert rule_conf < llm_conf
+    assert rule_conf == round(llm_conf * 0.8, 2)
+
+
+@pytest.mark.asyncio
 async def test_run_report_writer_creates_markdown():
     state = run_report_writer(await run_opportunity_scoring(build_ready_state()))
 

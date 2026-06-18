@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 
 from multi_agents.ecommerce.schemas.report import build_report_title
+from multi_agents.ecommerce.agents.audit import finalize_audit
 from multi_agents.ecommerce.state import EcommerceResearchState, EcommerceSource
 
 
@@ -99,14 +100,13 @@ def run_report_writer(state: EcommerceResearchState) -> EcommerceResearchState:
     )
 
     state["final_report"] = report
-    state["audit_log"].append(
-        {
-            "agent": "EcommerceReportWriterAgent",
-            "status": "success",
-            "duration_ms": round((time.perf_counter() - started) * 1000),
-            "source_count": len(citations),
-            "confidence": 0.8,
-            "warning": None,
-        }
+    finalize_audit(
+        state,
+        "EcommerceReportWriterAgent",
+        status="success",
+        source_count=len(citations),
+        confidence=0.8,
+        warning=None,
+        started=started,
     )
     return state

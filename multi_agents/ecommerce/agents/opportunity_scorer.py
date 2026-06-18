@@ -22,6 +22,7 @@ from multi_agents.ecommerce.llm_helper import LlmFn, clamp, llm_json
 from multi_agents.ecommerce.prompts import OPPORTUNITY_SCORER_SYSTEM_PROMPT
 from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
 from multi_agents.ecommerce.schemas.scoring import calculate_overall_score
+from multi_agents.ecommerce.agents.audit import finalize_audit
 from multi_agents.ecommerce.state import EcommerceResearchState
 
 _RULE_REASONS = [
@@ -133,14 +134,16 @@ async def run_opportunity_scoring(
     }
 
     warning = "llm scoring unavailable, fallback to rule" if (llm_fn is not None and not used_llm) else None
-    state["audit_log"].append(
-        {
-            "agent": "OpportunityScoringAgent",
-            "status": "success",
-            "duration_ms": round((time.perf_counter() - started) * 1000),
-            "source_count": evidence_count,
-            "confidence": round(min(0.9, 0.3 + evidence_count * 0.08), 2),
-            "warning": warning,
-        }
+    # confidence 反映评分质量：LLM 降级到规则时打折，让 audit/评估页能看出降级
+    base_confidence = round(min(0.9, 0.3 + evidence_count * 0.08), 2)
+    confidence = base_confidence if used_llm else round(base_confidence * 0.8, 2)
+    finalize_audit(
+        state,
+        "OpportunityScoringAgent",
+        status="success",
+        source_count=evidence_count,
+        confidence=confidence,
+        warning=warning,
+        started=started,
     )
     return state
