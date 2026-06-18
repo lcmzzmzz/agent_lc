@@ -224,11 +224,6 @@ def _build_error_entry(case: dict[str, Any], error_msg: str) -> dict[str, Any]:
         "target_market": case["target_market"],
         "platforms": case["platforms"],
         "depth": case["depth"],
-        # 失败时不会有 report 等文件，路径字段省略（与成功路径的字段集合区分开）
-        "report": f"/outputs/ecommerce/demo-cases/{slug}/report.md",
-        "evaluation": f"/outputs/ecommerce/demo-cases/{slug}/evaluation.json",
-        "audit": f"/outputs/ecommerce/demo-cases/{slug}/audit.json",
-        "quality": f"/outputs/ecommerce/demo-cases/{slug}/quality.json",
         "status": "error",
         "error": error_msg,
     }

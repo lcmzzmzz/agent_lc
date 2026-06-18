@@ -139,6 +139,7 @@ function render(cases){
 
   // 使用清单内联的 summary 字段（更稳，少一次网络请求）
   const rows = cases.map(c => ({ ...c, s: c.summary || {} }));
+  const successfulRows = rows.filter(c => c.status !== "error");
 
   // 快速导航
   $("caseNav").innerHTML = rows.map(c =>
@@ -147,10 +148,11 @@ function render(cases){
 
   // 汇总 KPI
   const n = rows.length;
-  const avgScore = (rows.reduce((a,r)=>a+(r.s.overall_score||0),0)/n).toFixed(2);
-  const avgConf  = (rows.reduce((a,r)=>a+(r.s.confidence||0),0)/n).toFixed(2);
-  const totalEv  = rows.reduce((a,r)=>a+(r.s.evidence_count||0),0);
-  const totalFb  = rows.reduce((a,r)=>a+(r.s.fallback_count||0),0);
+  const metricRows = successfulRows.length ? successfulRows : rows;
+  const avgScore = (metricRows.reduce((a,r)=>a+(r.s.overall_score||0),0)/metricRows.length).toFixed(2);
+  const avgConf  = (metricRows.reduce((a,r)=>a+(r.s.confidence||0),0)/metricRows.length).toFixed(2);
+  const totalEv  = metricRows.reduce((a,r)=>a+(r.s.evidence_count||0),0);
+  const totalFb  = metricRows.reduce((a,r)=>a+(r.s.fallback_count||0),0);
   $("kpis").innerHTML = `
     <div class="kpi"><div class="k">Cases</div><div class="v">${n}</div></div>
     <div class="kpi"><div class="k">平均评分</div><div class="v ${scoreClass(parseFloat(avgScore))}">${avgScore} / 10</div></div>
@@ -161,6 +163,14 @@ function render(cases){
   // 评分柱状条
   const maxScore = 10;
   $("barStrip").innerHTML = rows.map(r => {
+    if(r.status === "error"){
+      return `
+      <div class="bar-row">
+        <div class="name">${esc(r.title)}<div style="color:var(--bad); font-size:11px;">export failed</div></div>
+        <div class="bar-track"><div class="bar-fill" style="width:2%; background:var(--bad);"></div></div>
+        <div class="val bad">ERR</div>
+      </div>`;
+    }
     const v = r.s.overall_score;
     const w = v==null ? 0 : Math.max(2, (v/maxScore)*100); // 至少 2% 让 0 分也能看见
     const cls = scoreClass(v);
@@ -174,6 +184,23 @@ function render(cases){
 
   // 明细表
   $("evalBody").innerHTML = rows.map(r => {
+    if(r.status === "error"){
+      return `
+      <tr>
+        <td>
+          <div class="case-title">${esc(r.title)}</div>
+          <div class="case-meta">${esc(r.query||"")} · ${esc(r.target_market||"")} · ${(r.platforms||[]).map(esc).join(", ")}</div>
+          <div class="bad" style="font-size:12px; margin-top:4px;">${esc(r.error || "export failed")}</div>
+        </td>
+        <td class="num bad">ERR</td>
+        <td class="num">-</td>
+        <td class="num">-</td>
+        <td class="num">-</td>
+        <td class="num">-</td>
+        <td><span class="badge fail">ERROR</span></td>
+        <td>-</td>
+      </tr>`;
+    }
     const s = r.s;
     const passed = s.quality_passed;
     const badge = passed

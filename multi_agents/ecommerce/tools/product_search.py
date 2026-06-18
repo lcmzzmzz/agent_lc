@@ -43,12 +43,12 @@ _QUERY_TEMPLATES: dict[str, list[str]] = {
         "{query} product comparison",
     ],
     "review": [
-        "{query} customer complaints",
-        "{query} amazon reviews",
-        "{query} negative reviews",
-        "{query} reddit review",
-        "{query} pros and cons",
-        "{query} customer feedback",
+        "{query} customer complaints {market}",
+        "{query} amazon reviews {market}",
+        "{query} negative reviews {market}",
+        "{query} reddit review {market}",
+        "{query} pros and cons {market}",
+        "{query} customer feedback {market}",
     ],
     "risk": [
         "{query} safety issues",

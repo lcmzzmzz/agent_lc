@@ -25,43 +25,52 @@
 
 ---
 
-## 3. 选一个 Amazon 评论 Actor
+## 3. 选择 Amazon 两步 Actor
 
-在 Apify Store 搜 "amazon reviews"，挑一个，记下它的 actor ID（格式 `用户名/actor名`）。例如：
+ReviewInsightAgent 现在走的是“两步真实评论抓取”：
 
-- `compass/listing-amazon-reviews`
-- `natasuraj/amazon-reviews`
-- 其他你在 Store 找到的
+1. 关键词搜索产品，拿 Amazon ASIN
+2. 用 ASIN 抓该商品的真实评论
 
-> 不同 actor 的**输入字段**（keyword / asin / urls）和**输出字段**（reviewText / content…）不一样。本项目默认按 `compass/listing-amazon-reviews` 的常见字段做了映射（见 `multi_agents/ecommerce/tools/apify_search.py` 的 `_map_item`）。换了 actor 如果结果对不上，改 `_map_item` 和 `payload` 即可。
+当前默认 actor：
+
+- 产品搜索：`igview-owner~amazon-search-scraper`
+- 评论抓取：`web_wanderer~amazon-reviews-extractor`
+
+> Apify API 的 actorId 在 `run-sync-get-dataset-items` URL 里建议使用 `用户名~actor名` 格式，例如 `igview-owner~amazon-search-scraper`。不同 actor 的**输入字段**（keyword / asin / urls / products）和**输出字段**（reviewText / content / body）不一样。换 actor 后如果结果对不上，优先改 `multi_agents/ecommerce/tools/review_scraper.py` 里的 payload 和 `_map_amazon_review()` 映射。
 
 ---
 
 ## 4. 配置 .env
 
-在项目根目录 `.env` 里加（**三个变量**）：
+在项目根目录 `.env` 里加：
 
 ```bash
 # 1) Apify token（第 2 步拿到的）
 APIFY_API_TOKEN=apify_api_xxxxxxxxxxxxxxxxxxxxxxx
 
-# 2) 切换检索源到 apify（不设则默认 tavily）
-ECOMMERCE_SEARCH_BACKEND=apify
+# 2) 可选：ReviewInsightAgent 的产品搜索 actor（关键词 -> ASIN）
+APIFY_AMAZON_SEARCH_ACTOR=igview-owner~amazon-search-scraper
 
-# 3) 可选：指定 actor（不设用默认 compass/listing-amazon-reviews）
-APIFY_REVIEW_ACTOR=compass/listing-amazon-reviews
+# 3) 可选：ReviewInsightAgent 的评论抓取 actor（ASIN -> 评论）
+APIFY_AMAZON_REVIEWS_ACTOR=web_wanderer~amazon-reviews-extractor
 
 # 4) 可选：Amazon 站点国家（默认 US）
 APIFY_AMAZON_COUNTRY=US
+
+# 5) 可选：把趋势/竞品等普通检索也切到 Apify；不设则仍用 Tavily
+ECOMMERCE_SEARCH_BACKEND=apify
 ```
 
 > ⚠️ token 是密钥，`.env` 已在 `.gitignore` 里，不会被提交。**不要**把 token 写进代码或文档。
+
+> `APIFY_REVIEW_ACTOR` 是旧的单 actor 搜索源变量，只会被 `multi_agents/ecommerce/tools/apify_search.py` 读取。当前 ReviewInsightAgent 的真实评论链路读取的是 `APIFY_AMAZON_SEARCH_ACTOR` 和 `APIFY_AMAZON_REVIEWS_ACTOR`。
 
 ---
 
 ## 5. 启用并验证
 
-配好 `.env` 后，正常跑即可，runner 会自动检测 `ECOMMERCE_SEARCH_BACKEND=apify` 并切换：
+配好 `.env` 后，正常跑即可。只要 `APIFY_API_TOKEN` 存在，ReviewInsightAgent 会优先尝试 Apify 真实评论；如果 Apify 返回 0 条或失败，会自动降级到 Tavily fallback：
 
 ```bash
 # CLI
@@ -75,12 +84,20 @@ python -m uvicorn main:app --port 8000
 **验证是否生效**：看日志（控制台或 `logs/ecommerce/<时间戳>_<关键词>.log`）：
 
 ```
-[runner] 检索源: Apify
-[apify] query='portable blender reviews' actor=compass/listing-amazon-reviews 返回 8 条
-[ReviewInsight] 检索完成 sources=8 原始痛点=6
+[ReviewInsight] 开始 query='portable blender' scraper=apify platforms=['amazon', 'reddit']
+[apify:amazon] 第一步 search 拿到 ASIN: ['B0XXX1', 'B0XXX2']
+[apify:amazon] 第二步 reviews 抓取到 8 条评论
+[ReviewInsight] 抓取完成 source=apify review_count=8 fallback_reason=None
 ```
 
-报告「用户痛点」一节会是基于真实 Amazon 评论归纳的中文痛点。
+如果 free plan 或 actor 限制导致评论抓不到，日志会显示：
+
+```
+[ReviewInsight] Apify 返回 0 条评论，降级 Tavily fallback
+[ReviewInsight] 抓取完成 source=web_fallback review_count=6 fallback_reason=apify returned 0 reviews
+```
+
+报告「用户痛点」一节仍会产出，但 `review_source=web_fallback` 会明确标记它来自 Tavily 兜底，而不是 Amazon 真实评论。
 
 ---
 
@@ -102,8 +119,9 @@ ECOMMERCE_SEARCH_BACKEND=tavily
 |------|------|
 | 启动报 `APIFY_API_TOKEN 未配置` | `.env` 没加 token，或没 `load_dotenv`（CLI/API 入口已自动加载） |
 | 日志 `Apify 不可用(...)，回退 Tavily` | token 无效或 actor 跑挂了，自动降级 Tavily，不影响出报告 |
-| `[apify] 返回 0 条` | actor input 字段名不对（keyword vs searchQueries），或该 actor 不支持关键词搜；查该 actor 文档，改 `apify_search.py` 的 `payload` |
-| 结果字段对不上（title/body 空） | actor 输出字段名不同；改 `_map_item` 的字段映射 |
+| `[apify:amazon] 第一步 search 未拿到任何 ASIN` | 产品搜索 actor 的 input 字段名不对，或该 actor 不支持关键词搜索；查 actor 文档，改 `review_scraper.py` 的 `_search_asins()` payload |
+| `[apify:amazon] 第二步 reviews 抓取到 0 条评论` | 评论 actor 需要付费 proxy/Pay-Per-Result，或 input 字段不是 `products`；查 actor 文档，改 `_fetch_reviews()` payload |
+| 结果字段对不上（review_text 空） | actor 输出字段名不同；改 `_map_amazon_review()` 的字段映射 |
 | 超时 / 很慢 | Amazon 评论 actor 跑一次可能几十秒~几分钟；`run-sync` 会等，正常现象 |
 | 402 / 额度不足 | Apify 免费额度用完，充值或换免费 actor |
 
@@ -111,9 +129,10 @@ ECOMMERCE_SEARCH_BACKEND=tavily
 
 ## 8. 设计说明
 
-- **注入式**：Apify 实现成一个标准 `SearchFn = async (query, max_results) -> list[dict]`，和 Tavily 接口完全一致。`review_insight` 等 Agent 不关心数据来自哪，只消费标准化后的 source。
+- **双数据源**：ReviewInsightAgent 优先通过 `ApifyReviewScraper` 抓真实 Amazon 评论；失败或无 token 时使用 `FallbackSearchReviewScraper` 从 Tavily 网页摘要抽取评论句。
+- **两步抓取**：Amazon 评论 actor 通常只接受 ASIN/URL，不接受品类词，所以先通过产品搜索 actor 拿 ASIN，再用评论 actor 抓评论正文。
 - **可降级**：Apify 不可用时自动回退 Tavily，保证流程不崩。
-- **可扩展**：以后接 SerpAPI / Rainforest API / 自建爬虫，只要再实现一个 `SearchFn` 并在 `_resolve_search_fn` 里加一个 backend 分支即可。
+- **可扩展**：以后接 Reddit / TikTok / Google Maps 评论时，只要实现新的 `ReviewSource` 或扩展 `ApifyReviewScraper.SUPPORTED_PLATFORMS`，Agent 层不用改。
 
 ## 真实测试结论（2026-06-18，free plan 实测）
 
