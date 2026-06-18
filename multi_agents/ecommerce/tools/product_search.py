@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
 from multi_agents.ecommerce.state import EcommerceSource
 from multi_agents.ecommerce.tools.source_normalizer import normalize_source
 
@@ -96,3 +97,27 @@ async def search_sources(
             sources.append(source)
 
     return sources
+
+
+def make_budgeted_search_fn(
+    search_fn: SearchFn, budget_manager: BudgetManager | None
+) -> SearchFn:
+    """把 search_fn 包一层预算闸门。
+
+    【正经注释】每次调用前查 budget_manager.can_use('search')：超预算则直接返回 []，
+    并通过 record_degradation 在 governance 上标记降级，保证审计可见；未超则 record 后放行。
+    budget_manager 为 None 时（兼容旧调用/无治理态）退化为透传。
+
+    【大白话注释】给搜索函数装个"用量计数器 + 闸门"——没超额度就放行并 +1，
+    超了就立刻返回空结果、并在治理日志里记一笔降级，省得搜索把预算烧光。
+    """
+
+    async def wrapped(query: str, max_results: int) -> list[dict[str, Any]]:
+        if budget_manager is not None:
+            if not budget_manager.can_use("search"):
+                budget_manager.record_degradation("SearchFn", "search budget exceeded")
+                return []
+            budget_manager.record("search")
+        return await search_fn(query, max_results)
+
+    return wrapped

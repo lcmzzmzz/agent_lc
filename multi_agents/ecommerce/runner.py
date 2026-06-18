@@ -36,7 +36,7 @@ from multi_agents.ecommerce.runtime.policy_guard import (
     validate_research_request,
 )
 from multi_agents.ecommerce.state import EcommerceResearchState, create_initial_state
-from multi_agents.ecommerce.tools.product_search import SearchFn
+from multi_agents.ecommerce.tools.product_search import SearchFn, make_budgeted_search_fn
 
 # 全链路日志统一走这个 logger；各子模块 logger 会 propagate 到这里
 logger = logging.getLogger("multi_agents.ecommerce")
@@ -152,9 +152,13 @@ async def run_ecommerce_research(
             depth=depth,
         )
         budget_manager = BudgetManager(state["governance"], get_budget_config())
+        resolved_search_fn = make_budgeted_search_fn(
+            _resolve_search_fn(search_fn),
+            budget_manager,
+        )
         final_state = await run_ecommerce_graph(
             state,
-            search_fn=_resolve_search_fn(search_fn),
+            search_fn=resolved_search_fn,
             llm_fn=llm_fn,
             progress_callback=progress_callback,
             budget_manager=budget_manager,

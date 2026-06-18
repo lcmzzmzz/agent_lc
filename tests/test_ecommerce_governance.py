@@ -220,3 +220,43 @@ async def test_execution_guard_uses_fallback_after_failure():
     summary = summarize_governance(governance)
     assert summary["fallback_count"] == 1
     assert summary["failure_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_budgeted_search_records_usage():
+    from multi_agents.ecommerce.runtime.budget_manager import BudgetConfig, BudgetManager
+    from multi_agents.ecommerce.tools.product_search import make_budgeted_search_fn
+
+    governance = empty_governance_state()
+    budget = BudgetManager(governance, BudgetConfig(max_search_calls=2))
+
+    async def fake_search(query, max_results):
+        return [{"title": "R", "href": "https://example.com/r", "body": "Body"}]
+
+    wrapped = make_budgeted_search_fn(fake_search, budget)
+    result = await wrapped("portable blender reviews", 1)
+
+    assert result
+    assert governance["usage"]["search_call_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_budgeted_search_returns_empty_when_budget_exceeded():
+    from multi_agents.ecommerce.runtime.budget_manager import BudgetConfig, BudgetManager
+    from multi_agents.ecommerce.tools.product_search import make_budgeted_search_fn
+
+    governance = empty_governance_state()
+    budget = BudgetManager(governance, BudgetConfig(max_search_calls=0))
+    called = False
+
+    async def fake_search(query, max_results):
+        nonlocal called
+        called = True
+        return []
+
+    wrapped = make_budgeted_search_fn(fake_search, budget)
+    result = await wrapped("portable blender reviews", 1)
+
+    assert result == []
+    assert called is False
+    assert governance["degraded_by_budget"] is True

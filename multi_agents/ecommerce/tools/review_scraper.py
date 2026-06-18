@@ -174,10 +174,17 @@ class ApifyReviewScraper:
     name = "apify"
     SUPPORTED_PLATFORMS = {"amazon"}
 
-    def __init__(self, token: str, actors: dict[str, str] | None = None, country: str = "US"):
+    def __init__(
+        self,
+        token: str,
+        actors: dict[str, str] | None = None,
+        country: str = "US",
+        governance: dict[str, Any] | None = None,
+    ):
         self.token = token
         self.actors = {**DEFAULT_ACTORS, **(actors or {})}
         self.country = country
+        self.governance = governance
 
     async def scrape(
         self, query: str, platforms: list[str], max_reviews: int,
@@ -234,6 +241,10 @@ class ApifyReviewScraper:
 
         def _sync() -> list[dict]:
             try:
+                if self.governance is not None:
+                    from multi_agents.ecommerce.runtime.telemetry import increment_usage
+
+                    increment_usage(self.governance, "external_api_call_count", 1)
                 resp = requests.post(
                     _APIFY_RUN_URL.format(actor=actor),
                     json={"keyword": keyword, "maxResults": limit},
@@ -270,6 +281,10 @@ class ApifyReviewScraper:
 
         def _sync() -> list[ReviewItem]:
             try:
+                if self.governance is not None:
+                    from multi_agents.ecommerce.runtime.telemetry import increment_usage
+
+                    increment_usage(self.governance, "external_api_call_count", 1)
                 resp = requests.post(
                     _APIFY_RUN_URL.format(actor=actor),
                     json={"products": asins, "maxReviews": max_reviews},
@@ -347,6 +362,7 @@ class FallbackSearchReviewScraper:
 
 def get_review_scraper(
     search_fn: SearchFn | None = None,
+    governance: dict[str, Any] | None = None,
 ) -> tuple[ReviewSource, str | None]:
     """选择当前可用的评论源。
 
@@ -366,7 +382,7 @@ def get_review_scraper(
             if v:
                 actors[actor_key] = v
         country = os.environ.get("APIFY_AMAZON_COUNTRY", "US")
-        return ApifyReviewScraper(token, actors=actors, country=country), None
+        return ApifyReviewScraper(token, actors=actors, country=country, governance=governance), None
 
     if search_fn is None:
         from multi_agents.ecommerce.runner import default_search_fn

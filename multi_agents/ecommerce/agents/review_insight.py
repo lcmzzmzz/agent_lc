@@ -122,7 +122,7 @@ async def run_review_insight(
     platforms = _review_platforms()
 
     scraper: ReviewSource
-    scraper, fallback_reason = get_review_scraper(search_fn)
+    scraper, fallback_reason = get_review_scraper(search_fn, governance=state.get("governance"))
     search_keyword = await _to_search_keyword(llm_fn, state["query"])
     logger.info(
         f"[ReviewInsight] 开始 query='{state['query']}' keyword='{search_keyword}' "
