@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import ipaddress
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -26,6 +27,10 @@ ALLOWED_DEPTHS = {"fast", "standard", "deep"}
 ALLOWED_MARKETS = {"US", "UK", "DE", "JP"}
 ALLOWED_PLATFORMS = {"amazon", "google", "reddit", "tiktok", "youtube", "web"}
 SECRET_KEY_PARTS = ("token", "api_key", "apikey", "authorization", "password", "secret")
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b([a-z0-9_]*(?:token|api_key|apikey|authorization|password|secret)[a-z0-9_]*)"
+    r"\s*([=:])\s*([^\s,;]+)"
+)
 
 TOOL_PERMISSIONS = {
     "TrendResearchAgent": {"search"},
@@ -107,4 +112,6 @@ def redact_secrets(value: Any) -> Any:
         return [redact_secrets(item) for item in value]
     if isinstance(value, tuple):
         return tuple(redact_secrets(item) for item in value)
+    if isinstance(value, str):
+        return _SECRET_ASSIGNMENT_RE.sub(r"\1\2[REDACTED]", value)
     return copy.deepcopy(value)

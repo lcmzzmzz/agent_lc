@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+import multi_agents.ecommerce.graph as graph_mod
 from multi_agents.ecommerce.runner import run_ecommerce_research, slugify
 
 
@@ -96,3 +97,52 @@ async def test_runner_rejects_invalid_depth_before_search(tmp_path):
 
     assert "depth" in str(exc.value)
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_graph_records_failure_when_parallel_agent_raises(monkeypatch):
+    from multi_agents.ecommerce.graph import run_ecommerce_graph
+    from multi_agents.ecommerce.runtime.telemetry import summarize_governance
+    from multi_agents.ecommerce.state import create_initial_state
+
+    async def failing_trend(state, *, search_fn, llm_fn=None):
+        raise RuntimeError("trend exploded")
+
+    async def ok_competitor(state, *, search_fn, llm_fn=None):
+        state["competitor_result"] = {"evidence": [], "confidence": 0.0}
+        state["audit_log"].append(
+            {
+                "agent": "CompetitorAnalyzerAgent",
+                "status": "partial",
+                "duration_ms": 0,
+                "confidence": 0.0,
+            }
+        )
+        return state
+
+    async def ok_review(state, *, search_fn, llm_fn=None, budget_manager=None):
+        state["review_result"] = {"evidence": [], "confidence": 0.0}
+        state["audit_log"].append(
+            {
+                "agent": "ReviewInsightAgent",
+                "status": "partial",
+                "duration_ms": 0,
+                "confidence": 0.0,
+            }
+        )
+        return state
+
+    monkeypatch.setattr(graph_mod, "run_trend_research", failing_trend)
+    monkeypatch.setattr(graph_mod, "run_competitor_analysis", ok_competitor)
+    monkeypatch.setattr(graph_mod, "run_review_insight", ok_review)
+
+    async def fake_search(query, max_results):
+        return []
+
+    state = create_initial_state("portable blender")
+    updated = await run_ecommerce_graph(state, search_fn=fake_search)
+
+    summary = summarize_governance(updated["governance"])
+    assert summary["failure_count"] == 1
+    assert any(err["agent"] == "TrendResearchAgent" for err in updated["errors"])
+    assert updated["trend_result"]["summary"] == ""

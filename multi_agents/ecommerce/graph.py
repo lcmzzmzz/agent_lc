@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Literal
 
 from multi_agents.ecommerce.agents.competitor_analyzer import run_competitor_analysis
 from multi_agents.ecommerce.agents.opportunity_scorer import run_opportunity_scoring
@@ -31,7 +32,7 @@ from multi_agents.ecommerce.llm_helper import LlmFn
 from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
 from multi_agents.ecommerce.runtime.execution_guard import ExecutionGuard
 from multi_agents.ecommerce.state import EcommerceResearchState
-from multi_agents.ecommerce.tools.product_search import SearchFn
+from multi_agents.ecommerce.tools.product_search import SearchFn, make_budgeted_search_fn
 
 logger = logging.getLogger("multi_agents.ecommerce")
 
@@ -67,6 +68,35 @@ def _make_child_state(state: EcommerceResearchState) -> EcommerceResearchState:
     }
 
 
+def _failed_child_state(
+    state: EcommerceResearchState,
+    *,
+    agent: str,
+    result_key: Literal["trend_result", "competitor_result", "review_result"],
+    exc: Exception,
+) -> EcommerceResearchState:
+    """构造单个并发研究节点失败后的 partial 子状态。"""
+    child = _make_child_state(state)
+    child[result_key] = {
+        "summary": "",
+        "evidence": [],
+        "confidence": 0.0,
+        "error": str(exc),
+    }
+    child["audit_log"].append(
+        {
+            "agent": agent,
+            "status": "partial",
+            "duration_ms": 0,
+            "source_count": 0,
+            "confidence": 0.0,
+            "warning": str(exc),
+        }
+    )
+    child["errors"].append({"agent": agent, "error": str(exc)})
+    return child
+
+
 async def run_ecommerce_graph(
     state: EcommerceResearchState,
     *,
@@ -84,6 +114,35 @@ async def run_ecommerce_graph(
             except Exception:
                 logger.warning(f"[graph] progress_callback 推送失败 event={event}")
 
+    guard = ExecutionGuard(state["governance"])
+
+    async def _run_guarded_agent(
+        *,
+        agent: str,
+        result_key: Literal["trend_result", "competitor_result", "review_result"],
+        operation: Callable[[EcommerceResearchState], Awaitable[EcommerceResearchState]],
+    ) -> EcommerceResearchState:
+        child = _make_child_state(state)
+
+        async def _operation() -> EcommerceResearchState:
+            return await operation(child)
+
+        try:
+            return await guard.run(
+                name=agent,
+                operation=_operation,
+                timeout_ms=120_000,
+                max_retries=0,
+            )
+        except Exception as exc:
+            logger.error(f"[graph] {agent} failed under execution guard: {exc}")
+            return _failed_child_state(
+                state,
+                agent=agent,
+                result_key=result_key,
+                exc=exc,
+            )
+
     await _emit("start", {"query": state["query"], "market": state["target_market"]})
 
     # 1. 规划
@@ -96,9 +155,40 @@ async def run_ecommerce_graph(
     # 2. 三个研究节点并发（review 额外接收 llm_fn 做中文归纳）
     await _emit("research_running", {"agents": ["trend", "competitor", "review"]})
     trend_state, competitor_state, review_state = await asyncio.gather(
-        run_trend_research(_make_child_state(state), search_fn=search_fn, llm_fn=llm_fn),
-        run_competitor_analysis(_make_child_state(state), search_fn=search_fn, llm_fn=llm_fn),
-        run_review_insight(_make_child_state(state), search_fn=search_fn, llm_fn=llm_fn),
+        _run_guarded_agent(
+            agent="TrendResearchAgent",
+            result_key="trend_result",
+            operation=lambda child: run_trend_research(
+                child,
+                search_fn=make_budgeted_search_fn(
+                    search_fn, budget_manager, agent_name="TrendResearchAgent"
+                ),
+                llm_fn=llm_fn,
+            ),
+        ),
+        _run_guarded_agent(
+            agent="CompetitorAnalyzerAgent",
+            result_key="competitor_result",
+            operation=lambda child: run_competitor_analysis(
+                child,
+                search_fn=make_budgeted_search_fn(
+                    search_fn, budget_manager, agent_name="CompetitorAnalyzerAgent"
+                ),
+                llm_fn=llm_fn,
+            ),
+        ),
+        _run_guarded_agent(
+            agent="ReviewInsightAgent",
+            result_key="review_result",
+            operation=lambda child: run_review_insight(
+                child,
+                search_fn=make_budgeted_search_fn(
+                    search_fn, budget_manager, agent_name="ReviewInsightAgent"
+                ),
+                llm_fn=llm_fn,
+                budget_manager=budget_manager,
+            ),
+        ),
     )
 
     state["trend_result"] = trend_state["trend_result"]

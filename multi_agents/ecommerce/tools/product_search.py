@@ -18,6 +18,8 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
+from multi_agents.ecommerce.runtime.policy_guard import PolicyViolation, assert_tool_allowed
+from multi_agents.ecommerce.runtime.telemetry import record_event
 from multi_agents.ecommerce.state import EcommerceSource
 from multi_agents.ecommerce.tools.source_normalizer import normalize_source
 
@@ -100,7 +102,10 @@ async def search_sources(
 
 
 def make_budgeted_search_fn(
-    search_fn: SearchFn, budget_manager: BudgetManager | None
+    search_fn: SearchFn,
+    budget_manager: BudgetManager | None,
+    *,
+    agent_name: str = "TrendResearchAgent",
 ) -> SearchFn:
     """把 search_fn 包一层预算闸门。
 
@@ -114,6 +119,17 @@ def make_budgeted_search_fn(
 
     async def wrapped(query: str, max_results: int) -> list[dict[str, Any]]:
         if budget_manager is not None:
+            try:
+                assert_tool_allowed(agent_name, "search")
+            except PolicyViolation as exc:
+                record_event(
+                    budget_manager.governance,
+                    kind="policy",
+                    agent=agent_name,
+                    detail=str(exc),
+                    policy_blocked=True,
+                )
+                raise
             if not budget_manager.can_use("search"):
                 budget_manager.record_degradation("SearchFn", "search budget exceeded")
                 return []

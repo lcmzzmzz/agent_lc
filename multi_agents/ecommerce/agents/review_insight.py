@@ -24,6 +24,7 @@ from typing import Any
 from multi_agents.ecommerce.config import get_depth_config
 from multi_agents.ecommerce.llm_helper import LlmFn, llm_json, llm_text
 from multi_agents.ecommerce.prompts import REVIEW_INSIGHT_SYSTEM_PROMPT
+from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
 from multi_agents.ecommerce.runtime.telemetry import record_event
 from multi_agents.ecommerce.state import EcommerceResearchState
 from multi_agents.ecommerce.tools.product_search import SearchFn
@@ -115,6 +116,7 @@ async def run_review_insight(
     *,
     search_fn: SearchFn,
     llm_fn: LlmFn | None = None,
+    budget_manager: BudgetManager | None = None,
 ) -> EcommerceResearchState:
     started = time.perf_counter()
     config = get_depth_config(state["depth"])
@@ -122,7 +124,11 @@ async def run_review_insight(
     platforms = _review_platforms()
 
     scraper: ReviewSource
-    scraper, fallback_reason = get_review_scraper(search_fn, governance=state.get("governance"))
+    scraper, fallback_reason = get_review_scraper(
+        search_fn,
+        governance=state.get("governance"),
+        budget_manager=budget_manager,
+    )
     search_keyword = await _to_search_keyword(llm_fn, state["query"])
     logger.info(
         f"[ReviewInsight] 开始 query='{state['query']}' keyword='{search_keyword}' "

@@ -10,6 +10,8 @@ from multi_agents.ecommerce.tools.review_scraper import (
     _filter_relevant_products,
     get_review_scraper,
 )
+from multi_agents.ecommerce.runtime.budget_manager import BudgetConfig, BudgetManager
+from multi_agents.ecommerce.runtime.telemetry import empty_governance_state, summarize_governance
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +122,33 @@ async def test_apify_scraper_failure_returns_empty(monkeypatch):
     scraper, _ = get_review_scraper()
     items = await scraper.scrape("portable blender", ["amazon"], 5)
     assert items == []  # 失败不抛，返回空（由 review_insight 决定降级）
+
+
+@pytest.mark.asyncio
+async def test_apify_scraper_respects_external_api_budget(monkeypatch):
+    called = False
+
+    def fake_post(url, json=None, params=None, timeout=None):
+        nonlocal called
+        called = True
+        return _FakeResp([])
+
+    monkeypatch.setenv("APIFY_API_TOKEN", "fake-token")
+    import multi_agents.ecommerce.tools.review_scraper as mod
+
+    monkeypatch.setattr(mod.requests, "post", fake_post)
+
+    governance = empty_governance_state()
+    budget = BudgetManager(governance, BudgetConfig(max_external_api_calls=0))
+    scraper, _ = get_review_scraper(governance=governance, budget_manager=budget)
+
+    items = await scraper.scrape("portable blender", ["amazon"], 5)
+
+    assert items == []
+    assert called is False
+    summary = summarize_governance(governance)
+    assert summary["external_api_call_count"] == 0
+    assert summary["degraded_by_budget"] is True
 
 
 # ---------------------------------------------------------------------------

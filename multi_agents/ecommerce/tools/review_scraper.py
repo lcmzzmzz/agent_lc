@@ -24,6 +24,7 @@ from typing import Any, Protocol
 
 import requests
 
+from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
 from multi_agents.ecommerce.tools.product_search import SearchFn, build_ecommerce_queries
 from multi_agents.ecommerce.tools.review_extractor import extract_review_insights
 
@@ -180,11 +181,26 @@ class ApifyReviewScraper:
         actors: dict[str, str] | None = None,
         country: str = "US",
         governance: dict[str, Any] | None = None,
+        budget_manager: BudgetManager | None = None,
     ):
         self.token = token
         self.actors = {**DEFAULT_ACTORS, **(actors or {})}
         self.country = country
         self.governance = governance
+        self.budget_manager = budget_manager
+
+    def _can_call_external_api(self, operation: str) -> bool:
+        if self.budget_manager is None:
+            return True
+        if self.budget_manager.can_use("external_api"):
+            self.budget_manager.record("external_api")
+            return True
+        self.budget_manager.record_blocked(
+            "ApifyReviewScraper",
+            f"external api budget exceeded before {operation}",
+        )
+        logger.warning(f"[apify:{operation}] external_api 预算耗尽，跳过请求")
+        return False
 
     async def scrape(
         self, query: str, platforms: list[str], max_reviews: int,
@@ -241,10 +257,8 @@ class ApifyReviewScraper:
 
         def _sync() -> list[dict]:
             try:
-                if self.governance is not None:
-                    from multi_agents.ecommerce.runtime.telemetry import increment_usage
-
-                    increment_usage(self.governance, "external_api_call_count", 1)
+                if not self._can_call_external_api("amazon-search"):
+                    return []
                 resp = requests.post(
                     _APIFY_RUN_URL.format(actor=actor),
                     json={"keyword": keyword, "maxResults": limit},
@@ -281,10 +295,8 @@ class ApifyReviewScraper:
 
         def _sync() -> list[ReviewItem]:
             try:
-                if self.governance is not None:
-                    from multi_agents.ecommerce.runtime.telemetry import increment_usage
-
-                    increment_usage(self.governance, "external_api_call_count", 1)
+                if not self._can_call_external_api("amazon-reviews"):
+                    return []
                 resp = requests.post(
                     _APIFY_RUN_URL.format(actor=actor),
                     json={"products": asins, "maxReviews": max_reviews},
@@ -363,6 +375,7 @@ class FallbackSearchReviewScraper:
 def get_review_scraper(
     search_fn: SearchFn | None = None,
     governance: dict[str, Any] | None = None,
+    budget_manager: BudgetManager | None = None,
 ) -> tuple[ReviewSource, str | None]:
     """选择当前可用的评论源。
 
@@ -382,7 +395,16 @@ def get_review_scraper(
             if v:
                 actors[actor_key] = v
         country = os.environ.get("APIFY_AMAZON_COUNTRY", "US")
-        return ApifyReviewScraper(token, actors=actors, country=country, governance=governance), None
+        return (
+            ApifyReviewScraper(
+                token,
+                actors=actors,
+                country=country,
+                governance=governance,
+                budget_manager=budget_manager,
+            ),
+            None,
+        )
 
     if search_fn is None:
         from multi_agents.ecommerce.runner import default_search_fn

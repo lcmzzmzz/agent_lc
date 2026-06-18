@@ -92,3 +92,7 @@ class BudgetManager:
             detail=detail,
             degraded_by_budget=True,
         )
+
+    def record_blocked(self, agent: str, detail: str) -> None:
+        """预算闸门阻断调用时记录降级，但不增加任何资源用量。"""
+        self.record_degradation(agent, detail)

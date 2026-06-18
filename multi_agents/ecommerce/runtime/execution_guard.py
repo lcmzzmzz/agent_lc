@@ -23,6 +23,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
+from multi_agents.ecommerce.runtime.policy_guard import redact_secrets
 from multi_agents.ecommerce.runtime.telemetry import record_event
 
 T = TypeVar("T")
@@ -33,6 +34,12 @@ class ExecutionGuard:
 
     def __init__(self, governance: dict[str, Any]):
         self.governance = governance
+
+    def _safe_error_message(self, exc: Exception | None) -> str:
+        if exc is None:
+            return ""
+        redacted = redact_secrets({"error": str(exc)})
+        return str(redacted.get("error", ""))
 
     async def run(
         self,
@@ -66,26 +73,28 @@ class ExecutionGuard:
 
         if fallback is not None:
             result = await fallback()
+            safe_error = self._safe_error_message(last_exc)
             record_event(
                 self.governance,
                 kind="fallback",
                 agent=name,
-                detail=fallback_reason or str(last_exc),
+                detail=fallback_reason or safe_error,
                 retry_count=retry_count,
                 fallback_used=True,
                 error_type=type(last_exc).__name__ if last_exc else "",
-                error_message=str(last_exc) if last_exc else "",
+                error_message=safe_error,
             )
             return result
 
+        safe_error = self._safe_error_message(last_exc)
         record_event(
             self.governance,
             kind="failure",
             agent=name,
-            detail=str(last_exc),
+            detail=safe_error,
             retry_count=retry_count,
             error_type=type(last_exc).__name__ if last_exc else "",
-            error_message=str(last_exc) if last_exc else "",
+            error_message=safe_error,
         )
         if last_exc is not None:
             raise last_exc

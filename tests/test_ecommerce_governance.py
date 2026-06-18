@@ -165,6 +165,20 @@ def test_budget_manager_tracks_usage_and_limits():
     assert summary["degraded_by_budget"] is True
 
 
+def test_budget_manager_record_blocked_marks_budget_degradation():
+    governance = empty_governance_state()
+    budget = BudgetManager(governance, BudgetConfig(max_external_api_calls=0))
+
+    assert budget.can_use("external_api") is False
+
+    budget.record_blocked("ApifyReviewScraper", "external api budget exceeded")
+
+    summary = summarize_governance(governance)
+    assert summary["budget_exceeded"] is True
+    assert summary["degraded_by_budget"] is True
+    assert summary["external_api_call_count"] == 0
+
+
 import asyncio
 
 from multi_agents.ecommerce.runtime.execution_guard import ExecutionGuard
@@ -223,6 +237,26 @@ async def test_execution_guard_uses_fallback_after_failure():
 
 
 @pytest.mark.asyncio
+async def test_execution_guard_redacts_secret_like_error_messages():
+    governance = empty_governance_state()
+    guard = ExecutionGuard(governance)
+
+    async def failing():
+        raise RuntimeError("APIFY_API_TOKEN=secret-token failed")
+
+    with pytest.raises(RuntimeError):
+        await guard.run(
+            name="SecretAgent",
+            operation=failing,
+            timeout_ms=1000,
+        )
+
+    event = governance["events"][0]
+    assert "secret-token" not in event["error_message"]
+    assert "[REDACTED]" in event["error_message"]
+
+
+@pytest.mark.asyncio
 async def test_budgeted_search_records_usage():
     from multi_agents.ecommerce.runtime.budget_manager import BudgetConfig, BudgetManager
     from multi_agents.ecommerce.tools.product_search import make_budgeted_search_fn
@@ -260,3 +294,31 @@ async def test_budgeted_search_returns_empty_when_budget_exceeded():
     assert result == []
     assert called is False
     assert governance["degraded_by_budget"] is True
+
+
+@pytest.mark.asyncio
+async def test_budgeted_search_enforces_tool_permission():
+    from multi_agents.ecommerce.runtime.budget_manager import BudgetConfig, BudgetManager
+    from multi_agents.ecommerce.tools.product_search import make_budgeted_search_fn
+
+    governance = empty_governance_state()
+    budget = BudgetManager(governance, BudgetConfig(max_search_calls=2))
+    called = False
+
+    async def fake_search(query, max_results):
+        nonlocal called
+        called = True
+        return []
+
+    wrapped = make_budgeted_search_fn(
+        fake_search,
+        budget,
+        agent_name="ReportWriterAgent",
+    )
+
+    with pytest.raises(PolicyViolation):
+        await wrapped("portable blender reviews", 1)
+
+    assert called is False
+    assert governance["usage"]["search_call_count"] == 0
+    assert summarize_governance(governance)["policy_block_count"] == 1
