@@ -364,8 +364,8 @@ async def test_review_insight_passes_search_keyword(monkeypatch):
     def fake_post(url, json=None, params=None, timeout=None):
         if "amazon-search-scraper" in url:
             if isinstance(json, dict):
-                captured["search_keywords"].append(json.get("keyword"))
-            return _FakeResp([{"asin": "B0SPK1", "title": "Portable Bluetooth Speaker"}])
+                captured["search_keywords"].append(json.get("query"))
+            return _FakeResp([{"asin": "B0SPK1", "product_title": "Portable Bluetooth Speaker"}])
         if "amazon-reviews-extractor" in url:
             return _FakeResp([{"rating": "5", "reviewText": "Loud and clear sound.", "productUrl": "x"}])
         return _FakeResp([])
@@ -386,5 +386,53 @@ async def test_review_insight_passes_search_keyword(monkeypatch):
     rr = updated["review_result"]
     assert rr["search_keyword"] == "bluetooth speaker"   # 翻译生效
     assert rr["review_source"] == "apify"                 # 相关产品通过校验，未降级
-    assert "bluetooth speaker" in captured["search_keywords"]  # 翻译后的英文 keyword 真的传给了 Amazon search
+    assert "bluetooth speaker" in captured["search_keywords"]  # 翻译后的英文 query 真的传给了 Amazon search
     assert rr["review_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_search_products_uses_query_field_and_maps_product_title(monkeypatch):
+    """字段名修复的物证（真因回归测试）。
+
+    actor 实际认的 input 字段是 query（不是 keyword）、产品名字段是 product_title（不是 title）。
+    本测试断言：发送的 input 用 query 且无 keyword；product_title 被映射到 title；富字段被捕获。
+    这正是「搜蓝牙音箱返回三星手机 + title 恒空」两个 bug 的回归防护。
+    """
+    captured = {}
+
+    def fake_post(url, json=None, params=None, timeout=None):
+        captured["json"] = json
+        return _FakeResp([{
+            "asin": "B0SPK1",
+            "product_title": "Anker Soundcore 2 Portable Bluetooth Speaker",
+            "product_price": "$39.99",
+            "product_star_rating": "4.5",
+            "product_num_ratings": 1234,
+            "sales_volume": "10K+ bought in past month",
+            "is_amazon_choice": True,
+            "is_best_seller": False,
+            "product_url": "https://amazon.com/dp/B0SPK1",
+        }])
+
+    monkeypatch.setenv("APIFY_API_TOKEN", "fake-token")
+    import multi_agents.ecommerce.tools.review_scraper as mod
+    monkeypatch.setattr(mod.requests, "post", fake_post)
+
+    scraper, _ = get_review_scraper()
+    products = await scraper._search_products("bluetooth speaker", limit=5)
+
+    # ① input 字段名修复：actor 认 query，不认 keyword
+    assert captured["json"].get("query") == "bluetooth speaker"
+    assert "keyword" not in captured["json"]
+    assert captured["json"].get("maxPages") == 1
+    # ② product_title（actor 真实字段）映射到 title，title 不再恒空
+    assert len(products) == 1
+    p = products[0]
+    assert p["asin"] == "B0SPK1"
+    assert "Soundcore" in p["title"]
+    # ③ 富字段捕获（销量/评分/badge 是 Amazon 选品金矿，评论路径顺带带回）
+    assert p["rating"] == 4.5
+    assert p["num_ratings"] == 1234
+    assert "10K+" in p["sales_volume"]
+    assert p["is_amazon_choice"] is True
+    assert p["is_best_seller"] is False

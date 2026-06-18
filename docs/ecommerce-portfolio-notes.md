@@ -32,7 +32,7 @@
 - **并发编排**：LangGraph `StateGraph` fork-join（`planner→{trend,competitor,review}→scoring`），由图原生并发执行；`Annotated[list, operator.add]` reducer 自动合并三分支的 audit_log/errors，governance 靠闭包共享同一 dict（不走 channel，避免并发写冲突）。
 - **可观测性**：每次研究生成独立 log 文件，记录全链路 `INFO/WARNING/ERROR`；每个 Agent 写 `audit_log`（status / duration_ms / source_count / confidence / warning）。
 - **容错**：检索失败 / JSON 异常 / LLM 限流均降级；批量导出时单 case 失败不中断其余 case，manifest 照常写出。
-- **可测试**：55 个单测，注入式 `search_fn` / `llm_fn` 解耦网络与 LLM，测试不触网不花钱。
+- **可测试**：86 个单测（含字段名真因回归测试），注入式 `search_fn` / `llm_fn` 解耦网络与 LLM，测试不触网不花钱。
 - **中文化**：评论痛点由 LLM 从英文资料归纳为中文（`pain_points_language=zh`），LLM 不可用时保留原文并标注。
 
 ## 诚信边界（重要）
@@ -59,6 +59,23 @@
 **验证**：真实重跑蓝牙音箱，日志显示「相关性校验未通过 → 降级 Tavily」，痛点从手机变成音箱（电池续航虚标 / 退货流程）。单测 47→55，新增 8 个覆盖相关性校验 + keyword 翻译 + 降级链路。
 
 **面试金句**：「数据源相关性是 LLM 应用容易翻车的隐性 bug——模型很诚实，你喂它手机的评论它就归纳手机的痛点，结果看起来毫无破绽。解法是在数据进入模型前加一层相关性闸门 + 优雅降级，而不是信任上游数据源。」
+
+---
+
+### 真因复盘（2026-06-18 二次排查）—— 第一轮的根因判断其实是错的
+
+第一轮把现象归因为「Apify free actor 对中文 keyword 行为异常返回默认商品」。后来发现 Apify 评论路径**始终走不通**（每次都降级 Tavily），重新排查才挖到真因——**两个字段名 bug 叠加**：
+
+1. **input 字段名错配**：代码传 `{"keyword", "maxResults"}`，actor 实际认 `{"query", "maxPages"}`（查 Apify store 文档 + 实跑 dump 返回确认）。actor 收到不认识的字段 → 退化成默认搜索 `"Smart Phone"` → 永远返回三星手机。**跟中英文无关**，传任何词都返回手机。
+2. **返回字段名错配**：actor 返回的产品名字段叫 `product_title`，代码却读 `title`/`name`/`productName`（三个全 miss）→ title 恒空。
+
+两层叠加产生一个极具迷惑性的现象：第一轮加的相关性校验，因为 **title 恒空**，把所有产品都 `if not title: continue` 跳过 → `相关产品数=0` → 触发降级。**降级结果是对的（产品确实是手机，该降级），但触发机制是错的**——不是因为校验挡住了手机，而是因为 title 空全 skip。这是「**结果对掩盖根因错**」的典型隐性 bug。
+
+**真修复**：input 改 `query/maxPages/country`，返回改 `product_title` 优先 + 兜底。实跑验证：`bluetooth speaker` 真返回 Anker Soundcore 2 / JBL FLIP 5，`headphones` 返回 Sony / Apple，不再是手机；顺带白捡 `sales_volume`（"10K+ bought in past month"）/ `product_star_rating` / `is_amazon_choice` 等 Amazon 选品金矿字段。单测 19（review_scraper）+ 全 ecommerce 86 全绿，新增字段映射回归测试。
+
+> 端到端「抓到真实评论」受 Apify 月度额度耗尽限制未当场跑通（错误体 `Monthly usage hard limit exceeded`），与代码无关；修复正确性已由真实 search 返回 + 单测证明，额度恢复即可跑通。
+
+**升级金句**：「这个 bug 最坑的不是字段名错了，而是第一轮修复看起来生效了（降级了、报告也对了），根因判断却完全错误、被『结果正确』掩盖。数据源集成的隐性 bug 就这样——你加的防御机制可能误打误撞 cover 住症状，却把真正的字段名错配藏得更深。排查不能停在『现象消失』，要追到『每一层为什么这样行为』。教训：对接第三方 API 第一守则核对真实 schema 字段名，不能凭名字猜，更不能信 actor 的 example（它的 `exampleRunInput` 竟然是 `{"helloWorld": 123}`）。」
 
 ## 相关文件
 

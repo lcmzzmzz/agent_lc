@@ -261,7 +261,15 @@ class ApifyReviewScraper:
                     return []
                 resp = requests.post(
                     _APIFY_RUN_URL.format(actor=actor),
-                    json={"keyword": keyword, "maxResults": limit},
+                    json={
+                        # actor 实际 input schema（见 Apify store 文档）：
+                        #   query ✅ Required（不是 keyword）、maxPages（不是 maxResults）、country
+                        # 旧代码传 keyword/maxResults → actor 不认 → 退化成默认搜索 "Smart Phone"
+                        # —— 这才是「搜蓝牙音箱返回三星手机」的真因（不是中文 keyword 问题）。
+                        "query": keyword,
+                        "maxPages": 1,        # 1 页 ≈ 10-16 产品，足够 limit 截断
+                        "country": self.country,
+                    },
                     params={"token": self.token},
                     timeout=120,
                 )
@@ -271,16 +279,25 @@ class ApifyReviewScraper:
                     return []
                 products = []
                 for r in rows:
-                    if isinstance(r, dict) and r.get("asin"):
-                        products.append(
-                            {
-                                "asin": r.get("asin"),
-                                "title": str(
-                                    r.get("title") or r.get("name")
-                                    or r.get("productName") or ""
-                                ),
-                            }
-                        )
+                    if not isinstance(r, dict) or not r.get("asin"):
+                        continue
+                    # title 字段：actor 实际叫 product_title（不是 title/name/productName）。
+                    # 旧代码三个兜底名全 miss → title 恒空 → 相关性校验全 skip → 误降级。
+                    # product_title 优先，title/name 兜底（兼容旧测试 mock）。
+                    # 顺带捕获的丰富字段供后续竞品/选品分析（销量/评分/badge 是 Amazon 金矿）。
+                    products.append({
+                        "asin": r.get("asin"),
+                        "title": str(
+                            r.get("product_title") or r.get("title") or r.get("name") or ""
+                        ),
+                        "url": str(r.get("product_url") or ""),
+                        "price": str(r.get("product_price") or ""),
+                        "rating": _safe_float(r.get("product_star_rating")),
+                        "num_ratings": _safe_int(r.get("product_num_ratings")),
+                        "sales_volume": str(r.get("sales_volume") or ""),
+                        "is_best_seller": bool(r.get("is_best_seller")),
+                        "is_amazon_choice": bool(r.get("is_amazon_choice")),
+                    })
                 return products[:limit]
             except Exception as exc:
                 logger.warning(f"[apify:amazon-search] 失败: {exc}")
