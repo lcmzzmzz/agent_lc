@@ -358,7 +358,16 @@ python -m multi_agents.ecommerce --query "portable blender" --market US --depth 
 | `ExecutionGuard` | 包裹高风险调用，提供 timeout / retry / fallback，记录每次重试与降级事件 | `runtime/execution_guard.py` |
 | Telemetry | `record_event` / `summarize_governance` 把上述事件合并进 `state["governance"]` → audit_log → evaluation_summary | `runtime/telemetry.py` |
 
-**关键设计**：`graph._make_child_state` 让并发子状态**共享**主状态的 `governance` dict 引用（trend / competitor / review 的结果字段仍各自独立），因此 review 分支在子状态里记录的降级事件能无损回流到主状态，最终进入 `evaluation.json` 与评估对比页（重试 / 策略拦截 / LLM·Search 调用等列）。预算阈值可通过环境变量 `ECOMMERCE_MAX_LLM_CALLS` / `ECOMMERCE_MAX_SEARCH_CALLS` / `ECOMMERCE_MAX_SCRAPE_CALLS` / `ECOMMERCE_MAX_EXTERNAL_API_CALLS` / `ECOMMERCE_MAX_ESTIMATED_COST_USD` 覆盖（见 `config.get_budget_config()`）。
+**关键设计**：`graph._make_child_state` 让并发子状态**共享**主状态的 `governance` dict 引用（trend / competitor / review 的结果字段仍各自独立），因此 review 分支在子状态里记录的降级事件能无损回流到主状态，最终进入 `evaluation.json` 与评估对比页（重试 / 策略拦截 / LLM·Search 调用等列）。
+
+**生产接入点**：
+
+- `run_ecommerce_graph()` 用 `ExecutionGuard` 包裹 trend / competitor / review 三个并发研究节点；单个节点异常会记录 governance failure，并转成 partial 子状态继续合并，避免整条工作流直接中断。
+- `make_budgeted_search_fn()` 在 Trend / Competitor / Review 三个 Agent 各自的 search 调用前执行工具权限检查与 search 预算检查；超预算会记录 budget degradation 并返回空结果。
+- `ApifyReviewScraper` 在 Amazon product search / review fetch 两类 `requests.post` 前检查 `external_api` 预算；预算耗尽时不会发出外部 API 请求，而是返回空结果交给 ReviewInsightAgent 降级 Tavily。
+- `ExecutionGuard` 写入 governance error event 前会通过 `PolicyGuard.redact_secrets()` 对 `TOKEN=...` / `api_key=...` / `password=...` 等错误消息做脱敏。
+
+预算阈值可通过环境变量 `ECOMMERCE_MAX_LLM_CALLS` / `ECOMMERCE_MAX_SEARCH_CALLS` / `ECOMMERCE_MAX_SCRAPE_CALLS` / `ECOMMERCE_MAX_EXTERNAL_API_CALLS` / `ECOMMERCE_MAX_ESTIMATED_COST_USD` 覆盖（见 `config.get_budget_config()`）。
 
 ---
 

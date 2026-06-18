@@ -42,6 +42,7 @@ python -m multi_agents.ecommerce --query "portable blender" --market US --depth 
 
 - 在开源 GPT Researcher 上二次开发跨境电商选品垂直多 Agent 工作流（LangGraph 编排 7 个 Agent，三路并发研究）
 - LLM 结构化打分 + 规则降级兜底；WebSocket 阶段流式进度；审计日志与质量评估（引用覆盖率 / 证据充分度 / 风险披露 / 过度确定性）
+- Agent Runtime Governance：`ExecutionGuard` 接入并发 Agent，`BudgetManager` 控制 LLM/Search/Apify 外部 API 调用，`PolicyGuard` 执行输入校验、工具权限、URL 过滤与错误脱敏
 - 标准化 demo case + 评估对比页，可重复导出与横向比较
 
 ## 文档
@@ -362,8 +363,8 @@ python scripts/export_ecommerce_demo_cases.py --output-root outputs/ecommerce/de
 EcomResearcher includes a lightweight governance layer (`multi_agents/ecommerce/runtime/`) wrapped around the multi-agent workflow:
 
 - **Failure control:** per-step retry, fallback, and partial-result degradation so external provider failures (Apify / Tavily / LLM) never crash the full report.
-- **Cost control:** per-run budgets for LLM, search, scrape, and external API calls (`BudgetManager`), with graceful degradation to deterministic rule scoring when a budget is exhausted.
-- **Safety boundaries:** input validation, per-agent tool permissions, unsafe-URL filtering (file scheme / loopback / private IPs), and secret-safe redaction (`PolicyGuard`).
+- **Cost control:** per-run budgets for LLM, search, scrape, and external API calls (`BudgetManager`); Apify requests are blocked before `requests.post` when `ECOMMERCE_MAX_EXTERNAL_API_CALLS` is exhausted, and LLM scoring degrades to deterministic rules.
+- **Safety boundaries:** input validation, per-agent search permissions, unsafe-URL filtering (file scheme / loopback / private IPs), and secret-safe redaction for governance error events (`PolicyGuard`).
 - **Auditability:** every run exports governance metrics — fallback count, retry count, policy blocks, budget degradation, and llm/search/scrape/external-api usage — merged into `evaluation.json` and the eval comparison page.
 
 ## 🔍 Observability
