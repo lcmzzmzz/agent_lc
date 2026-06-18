@@ -163,3 +163,60 @@ def test_budget_manager_tracks_usage_and_limits():
 
     assert summary["budget_exceeded"] is True
     assert summary["degraded_by_budget"] is True
+
+
+import asyncio
+
+from multi_agents.ecommerce.runtime.execution_guard import ExecutionGuard
+
+
+@pytest.mark.asyncio
+async def test_execution_guard_retries_then_succeeds():
+    governance = empty_governance_state()
+    guard = ExecutionGuard(governance)
+    attempts = 0
+
+    async def flaky():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary")
+        return "ok"
+
+    result = await guard.run(
+        name="FlakyAgent",
+        operation=flaky,
+        timeout_ms=1000,
+        max_retries=1,
+    )
+
+    assert result == "ok"
+    summary = summarize_governance(governance)
+    assert summary["retry_count"] == 1
+    assert summary["failure_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_execution_guard_uses_fallback_after_failure():
+    governance = empty_governance_state()
+    guard = ExecutionGuard(governance)
+
+    async def failing():
+        raise RuntimeError("provider down")
+
+    async def fallback():
+        return "fallback"
+
+    result = await guard.run(
+        name="ReviewInsightAgent",
+        operation=failing,
+        timeout_ms=1000,
+        max_retries=0,
+        fallback=fallback,
+        fallback_reason="provider down",
+    )
+
+    assert result == "fallback"
+    summary = summarize_governance(governance)
+    assert summary["fallback_count"] == 1
+    assert summary["failure_count"] == 0

@@ -26,9 +26,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from multi_agents.ecommerce.config import get_budget_config
 from multi_agents.ecommerce.evaluation import build_evaluation_summary
 from multi_agents.ecommerce.graph import ProgressFn, run_ecommerce_graph
 from multi_agents.ecommerce.llm_helper import LlmFn
+from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
 from multi_agents.ecommerce.runtime.policy_guard import (
     PolicyViolation,
     validate_research_request,
@@ -149,11 +151,13 @@ async def run_ecommerce_research(
             platforms=platforms,
             depth=depth,
         )
+        budget_manager = BudgetManager(state["governance"], get_budget_config())
         final_state = await run_ecommerce_graph(
             state,
             search_fn=_resolve_search_fn(search_fn),
             llm_fn=llm_fn,
             progress_callback=progress_callback,
+            budget_manager=budget_manager,
         )
     finally:
         logger.info(f"========== 研究结束，日志见 {log_path} ==========")

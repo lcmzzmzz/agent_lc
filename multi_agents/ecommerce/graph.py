@@ -28,6 +28,8 @@ from multi_agents.ecommerce.agents.report_writer import run_report_writer
 from multi_agents.ecommerce.agents.review_insight import run_review_insight
 from multi_agents.ecommerce.agents.trend_researcher import run_trend_research
 from multi_agents.ecommerce.llm_helper import LlmFn
+from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
+from multi_agents.ecommerce.runtime.execution_guard import ExecutionGuard
 from multi_agents.ecommerce.state import EcommerceResearchState
 from multi_agents.ecommerce.tools.product_search import SearchFn
 
@@ -38,7 +40,21 @@ ProgressFn = Callable[[str, dict], Awaitable[None]]
 
 
 def _make_child_state(state: EcommerceResearchState) -> EcommerceResearchState:
-    """为并发研究节点构造独立子状态：共享只读字段，独立 audit_log/errors。"""
+    """为并发研究节点构造独立子状态：共享只读字段 + governance，独立 audit_log/errors。
+
+    【正经注释】
+    governance 必须【按引用共享】给子状态：trend/competitor/review 在并发子状态里
+    通过 record_event 写入的事件（重试 / 兜底 / 预算降级 / fallback），要能直接落到
+    父状态持有的同一个 governance dict 上，否则 asyncio.gather 合并结果时这些事件会
+    随子状态一起丢失。因此这里直接把 state["governance"] 原对象塞回子状态。
+    结果字段（trend_result/competitor_result/review_result/audit_log/errors）仍各自独立，
+    合并时由 run_ecommerce_graph 显式回填到父状态。
+
+    【大白话注释】
+    三个研究 Agent 并发跑，每个有自己的"结果盒子"，但它们都往同一个"治理账本"里记账。
+    所以账本（governance）必须共享同一个对象，不能复制；否则各自记的账会被丢弃。
+    结果数据照旧各记各的，最后由主流程收上来。
+    """
     return {
         "query": state["query"],
         "target_market": state["target_market"],
@@ -47,6 +63,7 @@ def _make_child_state(state: EcommerceResearchState) -> EcommerceResearchState:
         "research_plan": state["research_plan"],
         "audit_log": [],
         "errors": [],
+        "governance": state["governance"],
     }
 
 
@@ -56,6 +73,7 @@ async def run_ecommerce_graph(
     search_fn: SearchFn,
     llm_fn: LlmFn | None = None,
     progress_callback: ProgressFn | None = None,
+    budget_manager: BudgetManager | None = None,
 ) -> EcommerceResearchState:
     async def _emit(event: str, payload: dict | None = None) -> None:
         msg = f"[graph] {event}" + (f" {payload}" if payload else "")
@@ -102,7 +120,11 @@ async def run_ecommerce_graph(
     )
 
     # 3. 汇总评分（LLM 优先，规则兜底）
-    state = await run_opportunity_scoring(state, llm_fn=llm_fn)
+    state = await run_opportunity_scoring(
+        state,
+        llm_fn=llm_fn,
+        budget_manager=budget_manager,
+    )
     await _emit(
         "scoring_done",
         {

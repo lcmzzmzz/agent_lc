@@ -24,6 +24,7 @@ from typing import Any
 from multi_agents.ecommerce.config import get_depth_config
 from multi_agents.ecommerce.llm_helper import LlmFn, llm_json, llm_text
 from multi_agents.ecommerce.prompts import REVIEW_INSIGHT_SYSTEM_PROMPT
+from multi_agents.ecommerce.runtime.telemetry import record_event
 from multi_agents.ecommerce.state import EcommerceResearchState
 from multi_agents.ecommerce.tools.product_search import SearchFn
 from multi_agents.ecommerce.tools.review_scraper import (
@@ -141,6 +142,14 @@ async def run_review_insight(
             )
             items = await scraper.scrape(state["query"], platforms, max_reviews)
             fallback_reason = "apify returned 0 reviews"
+            if "governance" in state:
+                record_event(
+                    state["governance"],
+                    kind="fallback",
+                    agent="ReviewInsightAgent",
+                    detail=fallback_reason,
+                    fallback_used=True,
+                )
     except Exception as exc:
         logger.error(f"[ReviewInsight] scraper 抓取失败({scraper.name}): {exc}", exc_info=True)
         if scraper.name == "apify":
@@ -153,8 +162,28 @@ async def run_review_insight(
                 logger.error(f"[ReviewInsight] fallback 也失败: {exc2}")
                 items = []
             fallback_reason = f"apify failed: {exc}"
+            if "governance" in state:
+                record_event(
+                    state["governance"],
+                    kind="fallback",
+                    agent="ReviewInsightAgent",
+                    detail=fallback_reason,
+                    fallback_used=True,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
         else:
             fallback_reason = f"{scraper.name} failed: {exc}"
+            if "governance" in state:
+                record_event(
+                    state["governance"],
+                    kind="fallback",
+                    agent="ReviewInsightAgent",
+                    detail=fallback_reason,
+                    fallback_used=True,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
 
     raw_texts = [it.review_text for it in items if it.review_text]
     evidence = _collect_evidence(items)
