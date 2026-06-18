@@ -78,8 +78,8 @@ async def run_ecommerce_graph(
     # 2. 三个研究节点并发（review 额外接收 llm_fn 做中文归纳）
     await _emit("research_running", {"agents": ["trend", "competitor", "review"]})
     trend_state, competitor_state, review_state = await asyncio.gather(
-        run_trend_research(_make_child_state(state), search_fn=search_fn),
-        run_competitor_analysis(_make_child_state(state), search_fn=search_fn),
+        run_trend_research(_make_child_state(state), search_fn=search_fn, llm_fn=llm_fn),
+        run_competitor_analysis(_make_child_state(state), search_fn=search_fn, llm_fn=llm_fn),
         run_review_insight(_make_child_state(state), search_fn=search_fn, llm_fn=llm_fn),
     )
 

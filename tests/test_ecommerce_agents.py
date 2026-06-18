@@ -30,6 +30,11 @@ async def fake_llm(system: str, user: str) -> str:
     )
 
 
+async def fake_llm_text(system: str, user: str) -> str:
+    """返回中文总结文本的假 LLM（给 trend/competitor summary 用）。"""
+    return "便携榨汁机在北美市场近年需求上升，夏季与健身场景拉动明显，整体呈稳定增长态势。"
+
+
 async def string_score_llm(system: str, user: str) -> str:
     """模拟模型把数字包成字符串返回。"""
     return (
@@ -68,9 +73,26 @@ async def test_run_trend_research_returns_result():
     updated = await run_trend_research(state, search_fn=fake_search)
 
     assert updated["trend_result"]["summary"]
+    assert updated["trend_result"]["summary_source"] == "template"
     assert updated["trend_result"]["trend_score"] >= 0
     assert updated["trend_result"]["evidence"]
     assert updated["audit_log"][-1]["agent"] == "TrendResearchAgent"
+
+
+@pytest.mark.asyncio
+async def test_run_trend_research_summary_uses_llm():
+    state = run_planner(create_initial_state("portable blender"))
+    updated = await run_trend_research(state, search_fn=fake_search, llm_fn=fake_llm_text)
+    assert updated["trend_result"]["summary_source"] == "llm"
+    assert "便携榨汁机" in updated["trend_result"]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_run_competitor_analysis_summary_uses_llm():
+    state = run_planner(create_initial_state("portable blender"))
+    updated = await run_competitor_analysis(state, search_fn=fake_search, llm_fn=fake_llm_text)
+    assert updated["competitor_result"]["summary_source"] == "llm"
+    assert "便携榨汁机" in updated["competitor_result"]["summary"]
 
 
 @pytest.mark.asyncio
