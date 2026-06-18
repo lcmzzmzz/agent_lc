@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+from multi_agents.ecommerce.runtime.telemetry import empty_governance_state
+
 
 class EcommerceSource(TypedDict, total=False):
     """标准化后的单一数据源。"""
@@ -61,6 +63,7 @@ class EcommerceResearchState(TypedDict, total=False):
     audit_log: list[dict[str, Any]]
     errors: list[dict[str, Any]]
     output_paths: dict[str, str]
+    governance: dict[str, Any]
 
 
 def create_initial_state(
@@ -91,4 +94,5 @@ def create_initial_state(
         "quality_check": {},
         "audit_log": [],
         "errors": [],
+        "governance": empty_governance_state(),
     }
