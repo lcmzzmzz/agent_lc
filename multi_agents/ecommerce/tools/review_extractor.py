@@ -49,12 +49,19 @@ def split_sentences(text: str) -> list[str]:
     return [part.strip() for part in parts if part.strip()]
 
 
-def extract_review_insights(sources: list[EcommerceSource], limit: int = 12) -> list[str]:
-    """从 sources 中抽取含抱怨关键词的句子，最多 limit 条（按句子去重）。"""
-    insights: list[str] = []
+def extract_review_insights_with_source(
+    sources: list[EcommerceSource], limit: int = 12
+) -> list[tuple[str, str]]:
+    """抽取含抱怨关键词的 (句子, 来源 url)，最多 limit 条（按句子去重）。
+
+    保留每句对应的来源 url，避免上层按下标错配 url：一个网页常抽出多句，
+    下标对齐会让后半句子的 url 全塌缩到最后一个网页。
+    """
+    insights: list[tuple[str, str]] = []
     seen: set[str] = set()
 
     for source in sources:
+        url = source.get("url", "")
         text = f"{source.get('snippet', '')} {source.get('content', '')}"
         for sentence in split_sentences(text):
             lower = sentence.lower()
@@ -62,8 +69,13 @@ def extract_review_insights(sources: list[EcommerceSource], limit: int = 12) -> 
                 if sentence in seen:
                     continue
                 seen.add(sentence)
-                insights.append(sentence)
+                insights.append((sentence, url))
                 if len(insights) >= limit:
                     return insights
 
     return insights
+
+
+def extract_review_insights(sources: list[EcommerceSource], limit: int = 12) -> list[str]:
+    """从 sources 中抽取含抱怨关键词的句子，最多 limit 条（按句子去重）。"""
+    return [sentence for sentence, _ in extract_review_insights_with_source(sources, limit)]

@@ -57,14 +57,9 @@ APIFY_AMAZON_REVIEWS_ACTOR=web_wanderer~amazon-reviews-extractor
 
 # 4) 可选：Amazon 站点国家（默认 US）
 APIFY_AMAZON_COUNTRY=US
-
-# 5) 可选：把趋势/竞品等普通检索也切到 Apify；不设则仍用 Tavily
-ECOMMERCE_SEARCH_BACKEND=apify
 ```
 
 > ⚠️ token 是密钥，`.env` 已在 `.gitignore` 里，不会被提交。**不要**把 token 写进代码或文档。
-
-> `APIFY_REVIEW_ACTOR` 是旧的单 actor 搜索源变量，只会被 `multi_agents/ecommerce/tools/apify_search.py` 读取。当前 ReviewInsightAgent 的真实评论链路读取的是 `APIFY_AMAZON_SEARCH_ACTOR` 和 `APIFY_AMAZON_REVIEWS_ACTOR`。
 
 ---
 
@@ -101,25 +96,13 @@ python -m uvicorn main:app --port 8000
 
 ---
 
-## 6. 切回 Tavily
-
-把 `.env` 里 `ECOMMERCE_SEARCH_BACKEND` 改回 `tavily`（或删掉这行 / 注释掉）：
-
-```bash
-ECOMMERCE_SEARCH_BACKEND=tavily
-```
-
-或直接不设该变量（默认就是 Tavily）。
-
----
-
-## 7. 排错
+## 6. 排错
 
 | 现象 | 原因 / 处理 |
 |------|------|
 | 启动报 `APIFY_API_TOKEN 未配置` | `.env` 没加 token，或没 `load_dotenv`（CLI/API 入口已自动加载） |
 | 日志 `Apify 不可用(...)，回退 Tavily` | token 无效或 actor 跑挂了，自动降级 Tavily，不影响出报告 |
-| `[apify:amazon] 第一步 search 未拿到任何 ASIN` | 产品搜索 actor 的 input 字段名不对，或该 actor 不支持关键词搜索；查 actor 文档，改 `review_scraper.py` 的 `_search_asins()` payload |
+| `[apify:amazon] 第一步 search 未拿到任何 ASIN` | 产品搜索 actor 的 input 字段名不对，或该 actor 不支持关键词搜索；查 actor 文档，改 `review_scraper.py` 的 `_search_products()` payload（字段应为 `query`/`maxPages`） |
 | `[apify:amazon] 第二步 reviews 抓取到 0 条评论` | 评论 actor 需要付费 proxy/Pay-Per-Result，或 input 字段不是 `products`；查 actor 文档，改 `_fetch_reviews()` payload |
 | 结果字段对不上（review_text 空） | actor 输出字段名不同；改 `_map_amazon_review()` 的字段映射 |
 | 超时 / 很慢 | Amazon 评论 actor 跑一次可能几十秒~几分钟；`run-sync` 会等，正常现象 |
@@ -127,7 +110,7 @@ ECOMMERCE_SEARCH_BACKEND=tavily
 
 ---
 
-## 8. 设计说明
+## 7. 设计说明
 
 - **双数据源**：ReviewInsightAgent 优先通过 `ApifyReviewScraper` 抓真实 Amazon 评论；失败或无 token 时使用 `FallbackSearchReviewScraper` 从 Tavily 网页摘要抽取评论句。
 - **两步抓取**：Amazon 评论 actor 通常只接受 ASIN/URL，不接受品类词，所以先通过产品搜索 actor 拿 ASIN，再用评论 actor 抓评论正文。

@@ -1,5 +1,5 @@
 """
-BudgetManager：LLM / 搜索 / 抓取 / 外部 API 用量与成本预算控制。
+BudgetManager：LLM / 搜索 / 外部 API 用量与成本预算控制。
 
 【正经注释】
 围绕 governance state 的 usage 计数做"是否还能调用某类资源"判断，并提供
@@ -9,7 +9,7 @@ budget_exceeded / degraded_by_budget，保证审计可见。
 estimated_cost_usd 一旦超过 max_estimated_cost_usd 也会触发 budget_exceeded。
 
 【大白话注释】
-算账本：每次用大模型 / 搜索 / 抓页面 / 调外部 API，都问一句"还能不能用？"，
+算账本：每次用大模型 / 搜索 / 调外部 API，都问一句"还能不能用？"，
 超了就不能用。超预算后调用方要自己降级（比如改走规则），降级时调一下
 record_degradation 把这件事记进治理日志，后面好统计到底降了几次、是不是
 钱花超了。
@@ -26,18 +26,16 @@ from multi_agents.ecommerce.runtime.telemetry import increment_usage, record_eve
 USAGE_KEYS = {
     "llm": "llm_call_count",
     "search": "search_call_count",
-    "scrape": "scrape_call_count",
     "external_api": "external_api_call_count",
 }
 
 
 @dataclass(frozen=True)
 class BudgetConfig:
-    """四类资源调用上限 + 累计成本上限（USD）。"""
+    """三类资源调用上限 + 累计成本上限（USD）。"""
 
     max_llm_calls: int = 20
     max_search_calls: int = 80
-    max_scrape_calls: int = 20
     max_external_api_calls: int = 20
     max_estimated_cost_usd: float = 1.0
 
@@ -63,7 +61,6 @@ class BudgetManager:
         return {
             "llm": self.config.max_llm_calls,
             "search": self.config.max_search_calls,
-            "scrape": self.config.max_scrape_calls,
             "external_api": self.config.max_external_api_calls,
         }[kind]
 

@@ -26,7 +26,7 @@ import requests
 
 from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
 from multi_agents.ecommerce.tools.product_search import SearchFn, build_ecommerce_queries
-from multi_agents.ecommerce.tools.review_extractor import extract_review_insights
+from multi_agents.ecommerce.tools.review_extractor import extract_review_insights_with_source
 
 logger = logging.getLogger("multi_agents.ecommerce")
 
@@ -364,10 +364,10 @@ class FallbackSearchReviewScraper:
         sources = await search_sources(
             queries=queries, search_fn=self.search_fn, max_results_per_query=3
         )
-        sentences = extract_review_insights(sources, limit=max_reviews)
-        url_by_idx = [s.get("url", "") for s in sources]
+        # 抽取 (句子, 来源 url)：每句绑定它真正来自的网页 url，不再按下标错配
+        pairs = extract_review_insights_with_source(sources, limit=max_reviews)
         items: list[ReviewItem] = []
-        for i, sentence in enumerate(sentences):
+        for sentence, url in pairs:
             items.append(
                 ReviewItem(
                     platform="web",
@@ -377,7 +377,7 @@ class FallbackSearchReviewScraper:
                     helpful=0,
                     product_url="",
                     title="",
-                    source_url=url_by_idx[min(i, len(url_by_idx) - 1)] if url_by_idx else "",
+                    source_url=url,
                     raw={"from": "tavily_fallback"},
                 )
             )

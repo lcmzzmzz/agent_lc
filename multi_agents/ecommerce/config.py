@@ -55,14 +55,12 @@ def get_budget_config() -> BudgetConfig:
 
     【正经注释】所有键都给默认值，缺省即等价于 BudgetConfig()。
     支持的环境变量：ECOMMERCE_MAX_LLM_CALLS / ECOMMERCE_MAX_SEARCH_CALLS /
-    ECOMMERCE_MAX_SCRAPE_CALLS / ECOMMERCE_MAX_EXTERNAL_API_CALLS /
-    ECOMMERCE_MAX_ESTIMATED_COST_USD。
+    ECOMMERCE_MAX_EXTERNAL_API_CALLS / ECOMMERCE_MAX_ESTIMATED_COST_USD。
     【大白话注释】预算能从环境变量调；不设就用默认值。
     """
     return BudgetConfig(
         max_llm_calls=int(os.environ.get("ECOMMERCE_MAX_LLM_CALLS", "20")),
         max_search_calls=int(os.environ.get("ECOMMERCE_MAX_SEARCH_CALLS", "80")),
-        max_scrape_calls=int(os.environ.get("ECOMMERCE_MAX_SCRAPE_CALLS", "20")),
         max_external_api_calls=int(os.environ.get("ECOMMERCE_MAX_EXTERNAL_API_CALLS", "20")),
         max_estimated_cost_usd=float(os.environ.get("ECOMMERCE_MAX_ESTIMATED_COST_USD", "1.0")),
     )

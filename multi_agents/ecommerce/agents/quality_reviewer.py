@@ -40,7 +40,11 @@ def run_quality_review(state: EcommerceResearchState) -> EcommerceResearchState:
     citation_count = report.count("https://") + report.count("http://")
     citation_coverage = round(min(1.0, citation_count / _CITATION_BENCHMARK), 2)
     evidence_sufficiency = round(min(1.0, evidence_count / _EVIDENCE_BENCHMARK), 2)
-    risk_disclosure = "风险" in report and "销量预测" in report
+    # risk_disclosure：基于真实差评痛点判定，而非字面匹配"风险"二字
+    # （报告第 7 节的通用方法论风险是固定模板，字面匹配永远为真、形同虚设）。
+    # 有真实痛点 = 风险披露有据可依；否则提示缺少基于真实差评的风险依据。
+    pain_points = state.get("review_result", {}).get("pain_points", [])
+    risk_disclosure = len(pain_points) > 0
     overconfident = [term for term in OVERCONFIDENT_TERMS if term in report]
 
     issues: list[str] = []
@@ -49,7 +53,7 @@ def run_quality_review(state: EcommerceResearchState) -> EcommerceResearchState:
     if evidence_sufficiency < 0.5:
         issues.append("证据来源数量偏少")
     if not risk_disclosure:
-        issues.append("风险披露不足")
+        issues.append("风险披露不足（缺少基于真实差评的风险依据）")
     if overconfident:
         issues.append(f"存在过度确定性表达：{', '.join(overconfident)}")
 

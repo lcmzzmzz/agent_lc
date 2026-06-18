@@ -76,12 +76,24 @@ def _failed_child_state(
 ) -> dict[str, object]:
     """构造单个并发研究节点失败后的 partial 子状态（不重复记 governance failure，guard 已记）。"""
     child = _fresh_child(state, governance)
-    child[result_key] = {
+    # 失败分支：各维度置低分（2.0）+ data_failed 标志，避免下游 scoring 按
+    # .get(*_score, 4.0) 默认值算出"看似有依据"的评分，掩盖数据源失败。
+    _FAIL_SCORE_FIELD = {
+        "trend_result": "trend_score",
+        "competitor_result": "competition_score",
+        "review_result": "pain_point_score",
+    }
+    failed: dict[str, object] = {
         "summary": "",
         "evidence": [],
         "confidence": 0.0,
         "error": str(exc),
+        "data_failed": True,
     }
+    score_field = _FAIL_SCORE_FIELD.get(result_key)
+    if score_field is not None:
+        failed[score_field] = 2.0
+    child[result_key] = failed
     child["audit_log"].append(
         {
             "agent": agent,
@@ -177,7 +189,7 @@ def build_ecommerce_graph(
 
     async def competitor_node(s: dict) -> dict:
         return await _research_node(
-            "CompetitorAnalyzerAgent",
+            "CompetitorAnalysisAgent",
             "competitor_result",
             run_competitor_analysis,
             {"llm_fn": llm_fn},

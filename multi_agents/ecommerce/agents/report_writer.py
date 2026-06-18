@@ -4,7 +4,7 @@ EcommerceReportWriterAgent：选品报告生成。
 【正经注释】
 同步节点。按 schemas.report.REPORT_SECTIONS 的固定章节顺序，把趋势/竞品/评论/
 评分/风险拼成 Markdown 报告。引用来自三方 evidence 的 url，去重后编号列出。
-第 7 节强制包含"风险"与"销量预测"字样，供 QualityReviewerAgent 验证风险披露。
+第 7 节列通用方法论风险；QualityReviewerAgent 另基于真实差评痛点判定风险披露是否充分（不再靠字面"风险"二字）。
 
 【大白话注释】
 把前面所有人写进小本本的内容，按固定章节拼成一份报告。
@@ -44,6 +44,7 @@ def run_report_writer(state: EcommerceResearchState) -> EcommerceResearchState:
     score = state["opportunity_score"]
     review = state["review_result"]
     competitor = state["competitor_result"]
+    citations = collect_citation_lines(state)  # 复用，避免正文与 audit 各算一次
 
     pain_points = review.get("pain_points", [])
     section_4 = (
@@ -93,7 +94,7 @@ def run_report_writer(state: EcommerceResearchState) -> EcommerceResearchState:
             section_8,
             "## 9. 是否建议进入\n"
             f"{score.get('recommendation', '暂不建议进入，需补充数据验证')}",
-            "## 10. 数据来源与引用\n" + "\n".join(collect_citation_lines(state)),
+            "## 10. 数据来源与引用\n" + "\n".join(citations),
         ]
     )
 
@@ -103,7 +104,7 @@ def run_report_writer(state: EcommerceResearchState) -> EcommerceResearchState:
             "agent": "EcommerceReportWriterAgent",
             "status": "success",
             "duration_ms": round((time.perf_counter() - started) * 1000),
-            "source_count": len(collect_citation_lines(state)),
+            "source_count": len(citations),
             "confidence": 0.8,
             "warning": None,
         }

@@ -23,7 +23,6 @@ def empty_governance_state() -> dict[str, Any]:
         "usage": {
             "llm_call_count": 0,
             "search_call_count": 0,
-            "scrape_call_count": 0,
             "external_api_call_count": 0,
             "estimated_cost_usd": 0.0,
         },
@@ -88,7 +87,6 @@ def summarize_governance(governance: dict[str, Any] | None) -> dict[str, Any]:
         "degraded_by_budget": bool(governance.get("degraded_by_budget", False)),
         "llm_call_count": int(usage.get("llm_call_count", 0)),
         "search_call_count": int(usage.get("search_call_count", 0)),
-        "scrape_call_count": int(usage.get("scrape_call_count", 0)),
         "external_api_call_count": int(usage.get("external_api_call_count", 0)),
         "estimated_cost_usd": round(float(usage.get("estimated_cost_usd", 0.0)), 6),
     }

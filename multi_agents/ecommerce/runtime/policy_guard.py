@@ -34,10 +34,10 @@ _SECRET_ASSIGNMENT_RE = re.compile(
 
 TOOL_PERMISSIONS = {
     "TrendResearchAgent": {"search"},
-    "CompetitorAnalyzerAgent": {"search"},
+    "CompetitorAnalysisAgent": {"search"},
     "ReviewInsightAgent": {"review_scrape", "search"},
     "OpportunityScoringAgent": {"llm", "rule_score"},
-    "ReportWriterAgent": {"state_read", "markdown_write"},
+    "EcommerceReportWriterAgent": {"state_read", "markdown_write"},
     "QualityReviewerAgent": {"state_read", "quality_check"},
 }
 

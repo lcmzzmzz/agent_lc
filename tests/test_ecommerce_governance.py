@@ -70,7 +70,7 @@ def test_evaluation_summary_includes_governance_metrics():
     assert summary["budget_exceeded"] is False
     assert summary["llm_call_count"] == 0
     assert summary["search_call_count"] == 0
-    assert summary["scrape_call_count"] == 0
+    assert summary["external_api_call_count"] == 0
 
 
 import pytest
@@ -267,7 +267,7 @@ async def test_budgeted_search_records_usage():
     async def fake_search(query, max_results):
         return [{"title": "R", "href": "https://example.com/r", "body": "Body"}]
 
-    wrapped = make_budgeted_search_fn(fake_search, budget)
+    wrapped = make_budgeted_search_fn(fake_search, budget, agent_name="TrendResearchAgent")
     result = await wrapped("portable blender reviews", 1)
 
     assert result
@@ -288,7 +288,7 @@ async def test_budgeted_search_returns_empty_when_budget_exceeded():
         called = True
         return []
 
-    wrapped = make_budgeted_search_fn(fake_search, budget)
+    wrapped = make_budgeted_search_fn(fake_search, budget, agent_name="TrendResearchAgent")
     result = await wrapped("portable blender reviews", 1)
 
     assert result == []

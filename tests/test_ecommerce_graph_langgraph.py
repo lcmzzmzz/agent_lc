@@ -79,8 +79,8 @@ async def test_research_branches_run_concurrently(monkeypatch):
     state = create_initial_state("portable blender")
     await run_ecommerce_graph(state, search_fn=_fake_search)
 
-    assert counter["max_active"] >= 2, (
-        f"研究分支未并发执行（max_active={counter['max_active']}），langgraph fork-join 假设不成立"
+    assert counter["max_active"] >= 3, (
+        f"研究分支未三路并发执行（max_active={counter['max_active']}），langgraph fork-join 假设不成立"
     )
 
 

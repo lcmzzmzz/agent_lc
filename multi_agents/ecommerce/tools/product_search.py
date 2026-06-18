@@ -105,7 +105,7 @@ def make_budgeted_search_fn(
     search_fn: SearchFn,
     budget_manager: BudgetManager | None,
     *,
-    agent_name: str = "TrendResearchAgent",
+    agent_name: str,
 ) -> SearchFn:
     """把 search_fn 包一层预算闸门。
 
