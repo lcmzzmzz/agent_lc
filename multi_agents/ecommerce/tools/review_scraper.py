@@ -2,18 +2,16 @@
 评论抓取层（双数据源可插拔）：Apify 真实评论 + Tavily 摘要兜底。
 
 【正经注释】
-定义统一接口 ReviewSource.scrape(query, platforms, max_reviews) -> list[ReviewItem]，
-内含两个实现：
-- ApifyReviewScraper：通过 Apify 调平台 actor 抓真实评论（Amazon / Reddit），返回结构化
-  ReviewItem（rating / review_text / date / helpful / product_url）。
-- FallbackSearchReviewScraper：包装现有 Tavily search + 关键词抽取，把网页里的评论句
-  包成 ReviewItem（platform=web）。
-get_review_scraper() 工厂：有 APIFY_API_TOKEN 用 Apify，否则用 Fallback，保证无 token 时
-demo 仍可跑。Apify 运行时失败由 ReviewInsightAgent 捕获后切 Fallback。
+统一接口 ReviewSource.scrape(query, platforms, max_reviews) -> list[ReviewItem]。
+- ApifyReviewScraper：Amazon 走「两步」——先用关键词搜产品拿 ASIN，再用 ASIN 抓评论。
+  （Amazon 评论 actor 普遍只认 ASIN/URL，不支持品类词，故必须两步。）
+- FallbackSearchReviewScraper：包装 Tavily search + 关键词抽取。
+get_review_scraper() 工厂：有 APIFY_API_TOKEN 用 Apify，否则 Fallback。
+Apify 运行时失败由 ReviewInsightAgent 捕获后切 Fallback。
 
 【大白话注释】
-评论有两个来源：Apify 直接抓 Amazon/Reddit 真实评论，Tavily 搜含评论的网页兜底。
-这个模块把两种来源统一成同一个"取评论"接口，谁能用就用谁，都没了就降级。
+评论两种来源：Apify 真实抓 + Tavily 搜网页兜底。Apify 抓 Amazon 评论分两步——
+先搜出具体产品(ASIN)，再抓这些产品的评论（Amazon 评论只认具体产品，不认品类词）。
 """
 
 from __future__ import annotations
@@ -27,14 +25,16 @@ import requests
 
 from multi_agents.ecommerce.tools.product_search import SearchFn, build_ecommerce_queries
 from multi_agents.ecommerce.tools.review_extractor import extract_review_insights
-from multi_agents.ecommerce.tools.source_normalizer import normalize_source
 
 logger = logging.getLogger("multi_agents.ecommerce")
 
-# 各平台默认 Apify actor（可在 .env 用 APIFY_AMAZON_ACTOR / APIFY_REDDIT_ACTOR 覆盖）
+# Apify actorId 用 `~` 格式（username~name）。`/` 格式在 run-sync 端点会 404。
 DEFAULT_ACTORS = {
-    "amazon": "compass/listing-amazon-reviews",
-    "reddit": "trudax/reddit-scraper",
+    # 第一步：品类词 -> 产品 ASIN（已验证可用）
+    "amazon_search": "igview-owner~amazon-search-scraper",
+    # 第二步：ASIN -> 评论（free plan 可能抓不到，需 Apify 配置可用 proxy/actor）
+    "amazon_reviews": "web_wanderer~amazon-reviews-extractor",
+    # Reddit：actor 待验证，暂未实现（预留接口）
 }
 _APIFY_RUN_URL = "https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items"
 
@@ -68,43 +68,8 @@ class ReviewSource(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# 字段映射：不同平台/actor 输出字段不同，这里按常见字段兜底
+# 工具
 # ---------------------------------------------------------------------------
-
-def _map_amazon(raw: dict[str, Any]) -> ReviewItem:
-    return ReviewItem(
-        platform="amazon",
-        rating=_safe_float(raw.get("rating") or raw.get("stars")),
-        review_text=str(
-            raw.get("reviewText") or raw.get("content") or raw.get("text") or raw.get("body") or ""
-        ),
-        date=str(raw.get("date") or raw.get("reviewDate") or ""),
-        helpful=_safe_int(raw.get("helpful") or raw.get("helpfulVotes")),
-        product_url=str(raw.get("productUrl") or raw.get("url") or raw.get("reviewUrl") or ""),
-        title=str(raw.get("title") or raw.get("productName") or ""),
-        source_url=str(raw.get("url") or raw.get("reviewUrl") or ""),
-        raw=raw,
-    )
-
-
-def _map_reddit(raw: dict[str, Any]) -> ReviewItem:
-    return ReviewItem(
-        platform="reddit",
-        rating=None,
-        review_text=str(
-            raw.get("body") or raw.get("text") or raw.get("selftext") or raw.get("content") or ""
-        ),
-        date=str(raw.get("createdAt") or raw.get("createdUtc") or raw.get("date") or ""),
-        helpful=_safe_int(raw.get("upVotes") or raw.get("score") or raw.get("upvotes")),
-        product_url=str(raw.get("url") or raw.get("permalink") or raw.get("link") or ""),
-        title=str(raw.get("title") or ""),
-        source_url=str(raw.get("url") or raw.get("permalink") or ""),
-        raw=raw,
-    )
-
-
-_PLATFORM_MAPPER = {"amazon": _map_amazon, "reddit": _map_reddit}
-
 
 def _safe_float(v) -> float | None:
     try:
@@ -120,14 +85,35 @@ def _safe_int(v) -> int:
         return 0
 
 
+def _map_amazon_review(raw: dict[str, Any]) -> ReviewItem:
+    """把评论 actor 输出映射成 ReviewItem（按常见字段兜底）。"""
+    return ReviewItem(
+        platform="amazon",
+        rating=_safe_float(
+            raw.get("rating") or raw.get("reviewRating") or raw.get("starRating")
+        ),
+        review_text=str(
+            raw.get("reviewText") or raw.get("text") or raw.get("body")
+            or raw.get("content") or raw.get("review") or ""
+        ),
+        date=str(raw.get("date") or raw.get("reviewDate") or ""),
+        helpful=_safe_int(raw.get("helpful") or raw.get("helpfulVotes") or raw.get("helpfulVotesCount")),
+        product_url=str(raw.get("productUrl") or raw.get("url") or raw.get("reviewUrl") or ""),
+        title=str(raw.get("title") or raw.get("reviewTitle") or ""),
+        source_url=str(raw.get("reviewUrl") or raw.get("url") or ""),
+        raw=raw,
+    )
+
+
 # ---------------------------------------------------------------------------
-# Apify 真实评论抓取
+# Apify 真实评论抓取（Amazon 两步）
 # ---------------------------------------------------------------------------
 
 class ApifyReviewScraper:
-    """通过 Apify 抓各平台真实评论。MVP 支持 amazon / reddit。"""
+    """通过 Apify 抓真实评论。MVP 实现 Amazon 两步；Reddit 预留接口。"""
 
     name = "apify"
+    SUPPORTED_PLATFORMS = {"amazon"}
 
     def __init__(self, token: str, actors: dict[str, str] | None = None, country: str = "US"):
         self.token = token
@@ -137,50 +123,77 @@ class ApifyReviewScraper:
     async def scrape(
         self, query: str, platforms: list[str], max_reviews: int
     ) -> list[ReviewItem]:
-        per_platform = max(3, max_reviews // max(1, len(platforms)))
-        tasks = [
-            self._scrape_platform(p, query, per_platform)
-            for p in platforms
-            if p in self.actors
-        ]
-        results = await asyncio.gather(*tasks)
         items: list[ReviewItem] = []
-        for batch in results:
-            items.extend(batch)
+        if "amazon" in platforms:
+            items.extend(await self._scrape_amazon(query, max_reviews))
+        for p in platforms:
+            if p not in self.SUPPORTED_PLATFORMS:
+                logger.warning(
+                    f"[apify:{p}] 暂未实现（actor 待验证），跳过；该平台评论将缺失"
+                )
         return items[:max_reviews]
 
-    async def _scrape_platform(
-        self, platform: str, query: str, max_results: int
-    ) -> list[ReviewItem]:
-        actor = self.actors[platform]
-        mapper = _PLATFORM_MAPPER[platform]
+    async def _scrape_amazon(self, query: str, max_reviews: int) -> list[ReviewItem]:
+        """Amazon 两步：keyword -> ASINs -> reviews。"""
+        # Step 1: 品类词 -> 产品 ASIN
+        asins = await self._search_asins(query, limit=8)
+        if not asins:
+            logger.warning(f"[apify:amazon] 第一步 search 未拿到任何 ASIN，无法抓评论")
+            return []
+        logger.info(f"[apify:amazon] 第一步 search 拿到 ASIN: {asins[:5]}")
+        # Step 2: ASIN -> 评论
+        reviews = await self._fetch_reviews(asins[:5], max_reviews)
+        reviews = [r for r in reviews if r.review_text]
+        logger.info(
+            f"[apify:amazon] 第二步 reviews 抓取到 {len(reviews)} 条评论"
+            + ("" if reviews else "（可能需 Apify 配置付费 proxy/可用 actor 才能抓到 Amazon 评论）")
+        )
+        return reviews
 
-        def _sync() -> list[ReviewItem]:
+    async def _search_asins(self, query: str, limit: int = 8) -> list[str]:
+        actor = self.actors.get("amazon_search")
+        if not actor:
+            return []
+
+        def _sync() -> list[str]:
             try:
-                url = _APIFY_RUN_URL.format(actor=actor)
-                payload: dict[str, Any] = {
-                    "keyword": query,
-                    "searchQueries": [query],
-                    "maxResults": max_results,
-                    "startUrls": [],
-                }
-                if platform == "amazon":
-                    payload["country"] = self.country
                 resp = requests.post(
-                    url, json=payload, params={"token": self.token}, timeout=180
+                    _APIFY_RUN_URL.format(actor=actor),
+                    json={"keyword": query, "maxResults": limit},
+                    params={"token": self.token},
+                    timeout=120,
                 )
                 resp.raise_for_status()
                 rows = resp.json() if resp.content else []
                 if not isinstance(rows, list):
-                    rows = []
-                mapped = [mapper(r) for r in rows if isinstance(r, dict)]
-                mapped = [m for m in mapped if m.review_text]  # 过滤无正文
-                logger.info(
-                    f"[apify:{platform}] query='{query}' actor={actor} 返回 {len(mapped)} 条评论"
-                )
-                return mapped
+                    return []
+                return [r.get("asin") for r in rows if isinstance(r, dict) and r.get("asin")]
             except Exception as exc:
-                logger.warning(f"[apify:{platform}] 抓取失败 query='{query}': {exc}")
+                logger.warning(f"[apify:amazon-search] 失败: {exc}")
+                return []
+
+        return await asyncio.to_thread(_sync)
+
+    async def _fetch_reviews(self, asins: list[str], max_reviews: int) -> list[ReviewItem]:
+        actor = self.actors.get("amazon_reviews")
+        if not actor or not asins:
+            return []
+
+        def _sync() -> list[ReviewItem]:
+            try:
+                resp = requests.post(
+                    _APIFY_RUN_URL.format(actor=actor),
+                    json={"products": asins, "maxReviews": max_reviews},
+                    params={"token": self.token},
+                    timeout=180,
+                )
+                resp.raise_for_status()
+                rows = resp.json() if resp.content else []
+                if not isinstance(rows, list):
+                    return []
+                return [_map_amazon_review(r) for r in rows if isinstance(r, dict)]
+            except Exception as exc:
+                logger.warning(f"[apify:amazon-reviews] 失败: {exc}")
                 return []
 
         return await asyncio.to_thread(_sync)
@@ -191,7 +204,7 @@ class ApifyReviewScraper:
 # ---------------------------------------------------------------------------
 
 class FallbackSearchReviewScraper:
-    """无 Apify token 时的兜底：用 Tavily 搜含评论的网页，抽取评论句。
+    """无 Apify token / Apify 失败时的兜底：Tavily 搜含评论的网页，抽取评论句。
 
     review_text = 抽取的抱怨句；platform=web；rating=None；source_url=网页 url。
     """
@@ -208,14 +221,12 @@ class FallbackSearchReviewScraper:
         queries = build_ecommerce_queries(
             query=query, target_market="US", intent="review", max_queries=self.max_queries
         )
-        # 复用 search_sources 的去重/标准化
         from multi_agents.ecommerce.tools.product_search import search_sources
 
         sources = await search_sources(
             queries=queries, search_fn=self.search_fn, max_results_per_query=3
         )
         sentences = extract_review_insights(sources, limit=max_reviews)
-        # url 索引便于回填 source_url
         url_by_idx = [s.get("url", "") for s in sources]
         items: list[ReviewItem] = []
         for i, sentence in enumerate(sentences):
@@ -232,9 +243,7 @@ class FallbackSearchReviewScraper:
                     raw={"from": "tavily_fallback"},
                 )
             )
-        logger.info(
-            f"[fallback] query='{query}' Tavily 抽取评论句 {len(items)} 条"
-        )
+        logger.info(f"[fallback] query='{query}' Tavily 抽取评论句 {len(items)} 条")
         return items
 
 
@@ -253,11 +262,15 @@ def get_review_scraper(
     """
     token = os.environ.get("APIFY_API_TOKEN")
     if token:
-        actors = {}
-        if os.environ.get("APIFY_AMAZON_ACTOR"):
-            actors["amazon"] = os.environ["APIFY_AMAZON_ACTOR"]
-        if os.environ.get("APIFY_REDDIT_ACTOR"):
-            actors["reddit"] = os.environ["APIFY_REDDIT_ACTOR"]
+        actors: dict[str, str] = {}
+        env_map = {
+            "APIFY_AMAZON_SEARCH_ACTOR": "amazon_search",
+            "APIFY_AMAZON_REVIEWS_ACTOR": "amazon_reviews",
+        }
+        for env_key, actor_key in env_map.items():
+            v = os.environ.get(env_key)
+            if v:
+                actors[actor_key] = v
         country = os.environ.get("APIFY_AMAZON_COUNTRY", "US")
         return ApifyReviewScraper(token, actors=actors, country=country), None
 

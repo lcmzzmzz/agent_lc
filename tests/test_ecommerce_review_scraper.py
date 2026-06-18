@@ -32,7 +32,7 @@ def test_get_review_scraper_with_token_returns_apify(monkeypatch):
     scraper, reason = get_review_scraper()
     assert scraper.name == "apify"
     assert reason is None
-    assert "amazon" in scraper.actors and "reddit" in scraper.actors
+    assert "amazon_search" in scraper.actors and "amazon_reviews" in scraper.actors
 
 
 # ---------------------------------------------------------------------------
@@ -53,18 +53,20 @@ class _FakeResp:
 
 
 @pytest.mark.asyncio
-async def test_apify_scraper_maps_amazon_reviews(monkeypatch):
-    payload = [
-        {"rating": "4", "reviewText": "Works well but battery dies fast.", "date": "2024-01-01",
-         "productUrl": "https://amazon.com/dp/1", "helpfulVotes": 12, "productName": "Blender X"},
-        {"rating": "1", "reviewText": "Caught fire after one week.", "date": "2024-02-01",
-         "productUrl": "https://amazon.com/dp/2", "helpfulVotes": 3},
-    ]
-
+async def test_apify_scraper_two_step_amazon(monkeypatch):
+    # 两步 mock：按 actor URL 分派 —— search actor 返回 ASIN，reviews actor 返回评论
     def fake_post(url, json=None, params=None, timeout=None):
-        assert "apify.com" in url
         assert params["token"] == "fake-token"
-        return _FakeResp(payload)
+        if "amazon-search-scraper" in url:
+            return _FakeResp([{"asin": "B0XXX1"}, {"asin": "B0XXX2"}])
+        if "amazon-reviews-extractor" in url:
+            return _FakeResp([
+                {"rating": "4", "reviewText": "Works but battery dies fast.",
+                 "productUrl": "https://amazon.com/dp/B0XXX1"},
+                {"rating": "1", "reviewText": "Caught fire after a week.",
+                 "productUrl": "https://amazon.com/dp/B0XXX2"},
+            ])
+        return _FakeResp([])
 
     monkeypatch.setenv("APIFY_API_TOKEN", "fake-token")
     import multi_agents.ecommerce.tools.review_scraper as mod
@@ -78,8 +80,26 @@ async def test_apify_scraper_maps_amazon_reviews(monkeypatch):
     assert len(items) == 2
     assert all(it.platform == "amazon" for it in items)
     assert items[0].get("rating") == 4.0
-    assert "battery dies" in items[0].review_text
+    assert "battery" in items[0].review_text
     assert items[1].get("rating") == 1.0
+
+
+@pytest.mark.asyncio
+async def test_apify_scraper_search_empty_returns_nothing(monkeypatch):
+    # 第一步 search 拿不到 ASIN → 第二步不调，返回空
+    def fake_post(url, json=None, params=None, timeout=None):
+        if "amazon-search-scraper" in url:
+            return _FakeResp([])  # 没搜到产品
+        return _FakeResp([])
+
+    monkeypatch.setenv("APIFY_API_TOKEN", "fake-token")
+    import multi_agents.ecommerce.tools.review_scraper as mod
+
+    monkeypatch.setattr(mod.requests, "post", fake_post)
+
+    scraper, _ = get_review_scraper()
+    items = await scraper.scrape("portable blender", ["amazon"], 5)
+    assert items == []
 
 
 @pytest.mark.asyncio
