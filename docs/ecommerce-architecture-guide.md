@@ -347,6 +347,21 @@ python -m multi_agents.ecommerce --query "portable blender" --market US --depth 
 
 ---
 
+## 11.5 运行时治理层（Runtime Governance）
+
+> 治理层「包」在 Agent 图的外围，而非塞进某个 Agent 内部。四个职责模块协同：
+
+| 模块 | 职责 | 落点 |
+|------|------|------|
+| `PolicyGuard` | 执行前校验请求（query / depth / market / platforms）、Agent 级工具权限、不安全 URL 过滤（file / loopback / 私网）、密钥脱敏 | `runtime/policy_guard.py`，runner 入口 + source_normalizer |
+| `BudgetManager` | 执行中按 LLM / search / scrape / external_api 配额计费，超额自动降级（如 LLM 预算耗尽 → 规则评分） | `runtime/budget_manager.py`，scoring / search / scraper |
+| `ExecutionGuard` | 包裹高风险调用，提供 timeout / retry / fallback，记录每次重试与降级事件 | `runtime/execution_guard.py` |
+| Telemetry | `record_event` / `summarize_governance` 把上述事件合并进 `state["governance"]` → audit_log → evaluation_summary | `runtime/telemetry.py` |
+
+**关键设计**：`graph._make_child_state` 让并发子状态**共享**主状态的 `governance` dict 引用（trend / competitor / review 的结果字段仍各自独立），因此 review 分支在子状态里记录的降级事件能无损回流到主状态，最终进入 `evaluation.json` 与评估对比页（重试 / 策略拦截 / LLM·Search 调用等列）。预算阈值可通过环境变量 `ECOMMERCE_MAX_LLM_CALLS` / `ECOMMERCE_MAX_SEARCH_CALLS` / `ECOMMERCE_MAX_SCRAPE_CALLS` / `ECOMMERCE_MAX_EXTERNAL_API_CALLS` / `ECOMMERCE_MAX_ESTIMATED_COST_USD` 覆盖（见 `config.get_budget_config()`）。
+
+---
+
 ## 12. 可观测性总结
 
 | 维度 | 载体 |

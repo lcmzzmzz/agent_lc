@@ -357,6 +357,15 @@ Each case folder holds `report.md` / `audit.json` / `quality.json` / `evaluation
 python scripts/export_ecommerce_demo_cases.py --output-root outputs/ecommerce/demo-cases
 ```
 
+### Agent Runtime Governance
+
+EcomResearcher includes a lightweight governance layer (`multi_agents/ecommerce/runtime/`) wrapped around the multi-agent workflow:
+
+- **Failure control:** per-step retry, fallback, and partial-result degradation so external provider failures (Apify / Tavily / LLM) never crash the full report.
+- **Cost control:** per-run budgets for LLM, search, scrape, and external API calls (`BudgetManager`), with graceful degradation to deterministic rule scoring when a budget is exhausted.
+- **Safety boundaries:** input validation, per-agent tool permissions, unsafe-URL filtering (file scheme / loopback / private IPs), and secret-safe redaction (`PolicyGuard`).
+- **Auditability:** every run exports governance metrics — fallback count, retry count, policy blocks, budget degradation, and llm/search/scrape/external-api usage — merged into `evaluation.json` and the eval comparison page.
+
 ## 🔍 Observability
 
 GPT Researcher supports **LangSmith** for enhanced tracing and observability, making it easier to debug and optimize complex multi-agent workflows.
