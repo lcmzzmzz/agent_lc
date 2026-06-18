@@ -1,43 +1,77 @@
 """
-ReviewInsightAgent：用户评论痛点洞察（含 LLM 中文归纳）。
+ReviewInsightAgent：用户评论痛点洞察（双数据源：Apify 真实评论 + Tavily 兜底）。
 
 【正经注释】
-异步节点。消费 research_plan.review_queries，检索后用 review_extractor 抽取抱怨句子；
-若注入 llm_fn 可用，再用 LLM 把（多为英文的）原始反馈归纳为中文痛点列表，
-LLM 不可用则保留原文并标注 pain_points_language=en。失败走 fallback，不中断流程。
-pain_points_language 字段记录最终痛点语言（zh/en/none），便于审计与展示。
+异步节点。通过 get_review_scraper() 拿到当前评论源：
+- 有 APIFY_API_TOKEN → ApifyReviewScraper 抓 Amazon/Reddit 真实评论
+- 无 token 或 Apify 运行时失败 → 自动降级 FallbackSearchReviewScraper（Tavily 摘要）
+拿到评论后用 LLM 归纳中文痛点。audit_log 记录 review_source/review_count/platforms/
+fallback_reason，便于观测评论到底来自哪、降级了没。
 
 【大白话注释】
-搜用户评论，把抱怨句挑出来。如果配了大模型，就把这些（通常是英文的）反馈
-归纳成几条中文痛点；大模型用不了就保留英文原文，并标清楚语言。
+先试着抓真实评论（Apify）；抓不到就退回 Tavily 搜网页里的评论句。
+不管哪条路，最后都让大模型把评论归纳成几条中文痛点，并在日志里记清楚评论来源。
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import time
+from typing import Any
 
 from multi_agents.ecommerce.config import get_depth_config
 from multi_agents.ecommerce.llm_helper import LlmFn, llm_json
 from multi_agents.ecommerce.prompts import REVIEW_INSIGHT_SYSTEM_PROMPT
 from multi_agents.ecommerce.state import EcommerceResearchState
-from multi_agents.ecommerce.tools.product_search import SearchFn, search_sources
-from multi_agents.ecommerce.tools.review_extractor import extract_review_insights
+from multi_agents.ecommerce.tools.product_search import SearchFn
+from multi_agents.ecommerce.tools.review_scraper import (
+    FallbackSearchReviewScraper,
+    ReviewItem,
+    ReviewSource,
+    get_review_scraper,
+)
 
 logger = logging.getLogger(__name__)
 
-_RESULTS_PER_QUERY = 3
+
+def _review_platforms() -> list[str]:
+    """评论抓取平台（Apify 用）。默认 amazon+reddit，可用 APIFY_REVIEW_PLATFORMS 覆盖。"""
+    raw = os.environ.get("APIFY_REVIEW_PLATFORMS", "amazon,reddit")
+    return [p.strip() for p in raw.split(",") if p.strip()] or ["amazon", "reddit"]
+
+
+def _collect_evidence(items: list[ReviewItem]) -> list[dict[str, Any]]:
+    """从评论的 source_url/product_url 去重收集引用。"""
+    seen: set[str] = set()
+    evidence: list[dict[str, Any]] = []
+    for it in items:
+        url = it.get("source_url") or it.get("product_url") or ""
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        snippet = (it.review_text or "")[:200]
+        evidence.append(
+            {
+                "title": it.get("title") or f"{it.platform} review",
+                "url": url,
+                "source_type": it.platform if it.platform in ("amazon", "reddit") else "review_site",
+                "snippet": snippet,
+                "content": it.review_text,
+            }
+        )
+    return evidence
 
 
 async def _summarize_pain_points_zh(
-    llm_fn: LlmFn | None, pain_points: list[str]
+    llm_fn: LlmFn | None, texts: list[str]
 ) -> tuple[list[str] | None, bool]:
-    """用 LLM 把原始（多为英文）反馈归纳为中文痛点。返回 (zh_list | None, used_llm)。"""
-    if not llm_fn or not pain_points:
+    """用 LLM 把评论文本归纳为中文痛点。返回 (zh_list | None, used_llm)。"""
+    if not llm_fn or not texts:
         return None, False
     user = (
-        "以下是从公开资料抽取的用户反馈（可能为英文）：\n"
-        + "\n".join(f"- {p}" for p in pain_points[:10])
+        "以下是从公开资料/平台抓取的用户评论与反馈（可能为英文）：\n"
+        + "\n".join(f"- {t}" for t in texts[:12])
         + "\n请把它们归纳成 3-6 条中文用户痛点，每条一句话，客观描述问题。"
         '只返回 JSON：{"pain_points":["中文痛点1","中文痛点2"]}'
     )
@@ -57,74 +91,86 @@ async def run_review_insight(
 ) -> EcommerceResearchState:
     started = time.perf_counter()
     config = get_depth_config(state["depth"])
-    queries = state["research_plan"].get("review_queries", [])
-    logger.info(f"[ReviewInsight] 开始 query='{state['query']}' queries={len(queries)}")
+    max_reviews = config["max_sources_per_agent"] * 3
+    platforms = _review_platforms()
 
+    scraper: ReviewSource
+    scraper, fallback_reason = get_review_scraper(search_fn)
+    logger.info(
+        f"[ReviewInsight] 开始 query='{state['query']}' scraper={scraper.name} platforms={platforms}"
+    )
+
+    # 抓评论：Apify 失败/空 → 自动降级 Fallback
+    items: list[ReviewItem] = []
     try:
-        sources = await search_sources(
-            queries=queries,
-            search_fn=search_fn,
-            max_results_per_query=_RESULTS_PER_QUERY,
-        )
-        limited_sources = sources[: config["max_sources_per_agent"]]
-        raw_pain_points = extract_review_insights(limited_sources)
-        source_count = len(limited_sources)
-        logger.info(
-            f"[ReviewInsight] 检索完成 sources={source_count} 原始痛点={len(raw_pain_points)}"
-        )
-
-        # LLM 中文归纳（可用则覆盖；不可用保留英文原文）
-        zh_pain_points, used_llm = await _summarize_pain_points_zh(llm_fn, raw_pain_points)
-        final_pain_points = zh_pain_points or raw_pain_points
-        language = "zh" if used_llm else ("en" if raw_pain_points else "none")
-        if raw_pain_points and not used_llm and llm_fn:
-            logger.warning("[ReviewInsight] LLM 中文归纳失败，保留英文原文")
-
-        state["review_result"] = {
-            "summary": "公开评论和评测内容可用于提取用户痛点，但仍需真实平台评论进一步验证。",
-            "pain_points": final_pain_points,
-            "purchase_motivations": ["便携性", "使用便利性", "适合特定生活方式场景"],
-            "negative_review_patterns": final_pain_points[:5],
-            "opportunity_insights": [
-                "将高频抱怨点转化为产品改进点。",
-                "在 Listing 中明确使用场景和限制，降低预期偏差。",
-            ],
-            "pain_point_score": 8.0 if len(final_pain_points) >= 3 else 5.5,
-            "evidence": limited_sources,
-            "confidence": round(min(0.9, 0.3 + len(final_pain_points) * 0.08), 2),
-            "pain_points_language": language,
-        }
-        status = "success" if final_pain_points else "partial"
-        warning = None if final_pain_points else "review pain point data limited"
-        logger.info(
-            f"[ReviewInsight] 完成 status={status} 痛点语言={language} 痛点数={len(final_pain_points)}"
-        )
+        items = await scraper.scrape(state["query"], platforms, max_reviews)
+        if not items and scraper.name == "apify":
+            logger.warning("[ReviewInsight] Apify 返回 0 条评论，降级 Tavily fallback")
+            scraper = FallbackSearchReviewScraper(search_fn)
+            items = await scraper.scrape(state["query"], platforms, max_reviews)
+            fallback_reason = "apify returned 0 reviews"
     except Exception as exc:
-        logger.error(f"[ReviewInsight] 失败: {exc}", exc_info=True)
-        state["review_result"] = {
-            "summary": "评论数据不足，无法形成高置信度痛点分析。",
-            "pain_points": [],
-            "purchase_motivations": [],
-            "negative_review_patterns": [],
-            "opportunity_insights": [],
-            "pain_point_score": 4.0,
-            "evidence": [],
-            "confidence": 0.2,
-            "pain_points_language": "none",
-            "error": str(exc),
-        }
-        state["errors"].append({"agent": "ReviewInsightAgent", "error": str(exc)})
-        status = "partial"
-        warning = "review insight failed"
+        logger.error(f"[ReviewInsight] scraper 抓取失败({scraper.name}): {exc}", exc_info=True)
+        if scraper.name == "apify":
+            scraper = FallbackSearchReviewScraper(search_fn)
+            try:
+                items = await scraper.scrape(state["query"], platforms, max_reviews)
+            except Exception as exc2:
+                logger.error(f"[ReviewInsight] fallback 也失败: {exc2}")
+                items = []
+            fallback_reason = f"apify failed: {exc}"
+        else:
+            fallback_reason = f"{scraper.name} failed: {exc}"
 
+    raw_texts = [it.review_text for it in items if it.review_text]
+    evidence = _collect_evidence(items)
+    logger.info(
+        f"[ReviewInsight] 抓取完成 source={scraper.name} review_count={len(items)} fallback_reason={fallback_reason}"
+    )
+
+    # LLM 中文归纳
+    zh_pain_points, used_llm = await _summarize_pain_points_zh(llm_fn, raw_texts)
+    final_pain_points = zh_pain_points or raw_texts
+    if raw_texts and not used_llm and llm_fn:
+        logger.warning("[ReviewInsight] LLM 中文归纳失败，保留原文")
+    language = "zh" if used_llm else ("raw" if raw_texts else "none")
+
+    state["review_result"] = {
+        "summary": "基于多源评论/反馈归纳用户痛点；评论来源见 review_source 字段。",
+        "pain_points": final_pain_points,
+        "review_source": scraper.name,           # apify | web_fallback
+        "review_count": len(items),
+        "platforms": platforms,
+        "fallback_reason": fallback_reason,       # None 表示走 Apify 真实评论
+        "purchase_motivations": ["便携性", "使用便利性", "适合特定生活方式场景"],
+        "negative_review_patterns": final_pain_points[:5],
+        "opportunity_insights": [
+            "将高频抱怨点转化为产品改进点。",
+            "在 Listing 中明确使用场景和限制，降低预期偏差。",
+        ],
+        "pain_point_score": 8.0 if len(final_pain_points) >= 3 else 5.5,
+        "evidence": evidence,
+        "confidence": round(min(0.9, 0.3 + len(final_pain_points) * 0.08), 2),
+        "pain_points_language": language,
+    }
+
+    status = "success" if final_pain_points else "partial"
+    warning = None if final_pain_points else "review pain point data limited"
     state["audit_log"].append(
         {
             "agent": "ReviewInsightAgent",
             "status": status,
             "duration_ms": round((time.perf_counter() - started) * 1000),
-            "source_count": len(state["review_result"].get("evidence", [])),
+            "source_count": len(evidence),
             "confidence": state["review_result"].get("confidence", 0.0),
             "warning": warning,
+            "review_source": scraper.name,
+            "review_count": len(items),
+            "platforms": platforms,
+            "fallback_reason": fallback_reason,
         }
+    )
+    state["errors"].extend(
+        [{"agent": "ReviewInsightAgent", "error": str(fr)} for fr in [fallback_reason] if fr and "failed" in str(fr)]
     )
     return state

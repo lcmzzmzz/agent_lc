@@ -37,6 +37,7 @@ def build_evaluation_summary(state: dict) -> dict:
     confidence = round(fmean(confidence_values), 2) if confidence_values else 0.0
     duration_ms = sum(int(row.get("duration_ms", 0)) for row in audit_log)
     score = state.get("opportunity_score", {})
+    review = state.get("review_result", {})
     return {
         "overall_score": score.get("overall_score", 0.0),
         "confidence": confidence,
@@ -46,4 +47,6 @@ def build_evaluation_summary(state: dict) -> dict:
         "recommendation": score.get("recommendation", ""),
         "scored_by": score.get("scored_by", "rule"),
         "quality_passed": state.get("quality_check", {}).get("passed", False),
+        "review_source": review.get("review_source", "unknown"),
+        "review_count": review.get("review_count", 0),
     }
