@@ -192,21 +192,13 @@ async def _run_one_case(
         flush=True,
     )
 
-    return {
-        "slug": slug,
-        "title": case["title"],
-        "query": case["query"],
-        "target_market": case["target_market"],
-        "platforms": case["platforms"],
-        "depth": case["depth"],
-        "report": f"/outputs/ecommerce/demo-cases/{slug}/report.md",
-        "evaluation": f"/outputs/ecommerce/demo-cases/{slug}/evaluation.json",
-        "audit": f"/outputs/ecommerce/demo-cases/{slug}/audit.json",
-        "quality": f"/outputs/ecommerce/demo-cases/{slug}/quality.json",
-        "started_at": started_at,
-        "finished_at": finished_at,
-        "summary": eval_summary,
-    }
+    # 把条目构造抽到独立函数，方便单测覆盖（含 governance 字段透传校验）
+    return _build_success_entry(
+        case,
+        eval_summary,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
 
 
 def _build_error_entry(case: dict[str, Any], error_msg: str) -> dict[str, Any]:
@@ -227,6 +219,47 @@ def _build_error_entry(case: dict[str, Any], error_msg: str) -> dict[str, Any]:
         "status": "error",
         "error": error_msg,
     }
+
+
+def _build_success_entry(
+    case: dict[str, Any],
+    summary: dict[str, Any],
+    *,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+) -> dict[str, Any]:
+    """单个 case 成功时的清单条目。
+
+    【正经注释】
+    把 case 元数据 + 评估摘要拼成统一形状的清单行。summary 整体透传（不做字段白名单），
+    这样 evaluation_summary 里的 governance 指标（retry_count / llm_call_count /
+    estimated_cost_usd / policy_block_count …）会原样进入 manifest，供前端评估页展示。
+
+    【大白话注释】
+    把一个跑成功的 demo 拼成清单里的一行，评估摘要整包塞进去不挑字段，
+    这样后面那些"重试次数 / LLM 调用次数 / 花了多少钱"之类的治理指标都不会丢，
+    能直接在评估页上显示出来。
+    """
+    slug = case["slug"]
+    entry: dict[str, Any] = {
+        "slug": slug,
+        "title": case["title"],
+        "query": case["query"],
+        "target_market": case["target_market"],
+        "platforms": case["platforms"],
+        "depth": case["depth"],
+        "report": f"/outputs/ecommerce/demo-cases/{slug}/report.md",
+        "evaluation": f"/outputs/ecommerce/demo-cases/{slug}/evaluation.json",
+        "audit": f"/outputs/ecommerce/demo-cases/{slug}/audit.json",
+        "quality": f"/outputs/ecommerce/demo-cases/{slug}/quality.json",
+        "summary": summary,
+    }
+    # 时间戳是可选的（单测构造时不传），只在给了的时候写进去，保持条目形状稳定
+    if started_at is not None:
+        entry["started_at"] = started_at
+    if finished_at is not None:
+        entry["finished_at"] = finished_at
+    return entry
 
 
 async def _run_all(output_root: Path, force_clean: bool) -> list[dict[str, Any]]:
