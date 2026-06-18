@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from typing import Any, Protocol
 
 import requests
@@ -62,7 +63,8 @@ class ReviewSource(Protocol):
     name: str
 
     async def scrape(
-        self, query: str, platforms: list[str], max_reviews: int
+        self, query: str, platforms: list[str], max_reviews: int,
+        *, search_keyword: str | None = None,
     ) -> list[ReviewItem]:  # pragma: no cover - 接口定义
         ...
 
@@ -83,6 +85,63 @@ def _safe_int(v) -> int:
         return int(v) if v not in (None, "") else 0
     except (TypeError, ValueError):
         return 0
+
+
+# ---------------------------------------------------------------------------
+# 产品相关性校验
+# ---------------------------------------------------------------------------
+# 这些是「修饰词」而非品类核心词：bluetooth/wireless/portable 这种词几乎出现在
+# 任何电子产品的标题里（手机也带 bluetooth），拿它们判相关性会把「搜音箱返回手机」
+# 这种跑偏误判为相关。过滤掉，留下真正的品类词（speaker/blender/feeder…）。
+_GENERIC_MODIFIERS = {
+    "bluetooth", "wireless", "portable", "mini", "smart", "usb", "type",
+    "rechargeable", "electric", "digital", "best", "top", "cheap", "new",
+    "for", "the", "and", "with", "of",
+}
+
+
+def _category_terms(keyword: str) -> list[str]:
+    """从（英文）搜索关键词里抽出品类核心词：去修饰词 + 去短词。
+
+    例：'bluetooth speaker' -> ['speaker']；'portable blender' -> ['blender']；
+    'automatic pet feeder' -> ['automatic'（>2 字母保留）, 'pet', 'feeder']。
+    keyword 为空/纯中文（re.findall 取不到）时返回 []。
+    """
+    toks = re.findall(r"[a-z0-9]+", (keyword or "").lower())
+    cats = [t for t in toks if t not in _GENERIC_MODIFIERS and len(t) > 2]
+    return cats or toks
+
+
+def _filter_relevant_products(
+    products: list[dict], keyword: str, min_relevant: int = 1
+) -> list[dict]:
+    """校验 search 返回的产品是否与 keyword 真相关，不相关则返回空（触发降级）。
+
+    【正经注释】
+    Apify free actor 偶发会对中文/异常 keyword 返回默认热门商品（如搜「蓝牙音箱」
+    返回一堆三星手机 ASIN）。若不拦截，后续评论会全程建立在错误产品上。
+    这里要求产品 title 至少包含 keyword 的一个品类核心词；相关产品数 < min_relevant
+    即判定 search 跑偏，返回 []，由 ReviewInsightAgent 自动降级 Tavily。
+
+    【大白话注释】
+    搜音箱却返回手机，就别用这些手机去抓评论了——直接退回 Tavily 兜底，总比给错答案强。
+    """
+    cats = _category_terms(keyword)
+    relevant: list[dict] = []
+    for p in products:
+        title = (p.get("title") or "").lower()
+        if not title:
+            continue
+        if cats and any(c in title for c in cats):
+            relevant.append(p)
+    if len(relevant) < min_relevant:
+        sample = ", ".join((p.get("title") or "")[:50] for p in products[:3])
+        logger.info(
+            f"[apify:relevance] 相关性校验失败：keyword={keyword!r} cats={cats} "
+            f"相关产品数={len(relevant)}<{min_relevant}，返回产品如[{sample}]，将降级"
+        )
+        return []
+    return relevant
 
 
 def _map_amazon_review(raw: dict[str, Any]) -> ReviewItem:
@@ -121,11 +180,14 @@ class ApifyReviewScraper:
         self.country = country
 
     async def scrape(
-        self, query: str, platforms: list[str], max_reviews: int
+        self, query: str, platforms: list[str], max_reviews: int,
+        *, search_keyword: str | None = None,
     ) -> list[ReviewItem]:
         items: list[ReviewItem] = []
         if "amazon" in platforms:
-            items.extend(await self._scrape_amazon(query, max_reviews))
+            # search_keyword（英文，由 ReviewInsightAgent 翻译）命中率高、且可用于相关性校验；
+            # 未提供则退回 query 原文。
+            items.extend(await self._scrape_amazon(search_keyword or query, max_reviews))
         for p in platforms:
             if p not in self.SUPPORTED_PLATFORMS:
                 logger.warning(
@@ -133,14 +195,28 @@ class ApifyReviewScraper:
                 )
         return items[:max_reviews]
 
-    async def _scrape_amazon(self, query: str, max_reviews: int) -> list[ReviewItem]:
-        """Amazon 两步：keyword -> ASINs -> reviews。"""
-        # Step 1: 品类词 -> 产品 ASIN
-        asins = await self._search_asins(query, limit=8)
-        if not asins:
-            logger.warning(f"[apify:amazon] 第一步 search 未拿到任何 ASIN，无法抓评论")
+    async def _scrape_amazon(self, keyword: str, max_reviews: int) -> list[ReviewItem]:
+        """Amazon 两步：keyword -> 相关产品 ASIN -> reviews。
+
+        关键：第一步 search 后做相关性校验。Apify free actor 偶发会对异常/中文 keyword
+        返回默认热门商品（如搜音箱返回手机），若不拦截评论会全程跑偏。校验不过则返回 []，
+        由 ReviewInsightAgent 自动降级 Tavily。
+        """
+        # Step 1: keyword -> 产品列表（含 title，用于相关性校验）
+        products = await self._search_products(keyword, limit=8)
+        if not products:
+            logger.warning(f"[apify:amazon] 第一步 search 未拿到任何产品，无法抓评论")
             return []
-        logger.info(f"[apify:amazon] 第一步 search 拿到 ASIN: {asins[:5]}")
+        # 相关性校验：挡掉「搜音箱返回手机」这类跑偏
+        relevant = _filter_relevant_products(products, keyword)
+        if not relevant:
+            logger.warning("[apify:amazon] 相关性校验未通过，返回空 → 上层降级 Tavily")
+            return []
+        asins = [p["asin"] for p in relevant]
+        logger.info(
+            f"[apify:amazon] 第一步 search 拿到 {len(relevant)} 个相关产品: "
+            f"{[(p['asin'], p['title'][:40]) for p in relevant[:5]]}"
+        )
         # Step 2: ASIN -> 评论
         reviews = await self._fetch_reviews(asins[:5], max_reviews)
         reviews = [r for r in reviews if r.review_text]
@@ -150,16 +226,17 @@ class ApifyReviewScraper:
         )
         return reviews
 
-    async def _search_asins(self, query: str, limit: int = 8) -> list[str]:
+    async def _search_products(self, keyword: str, limit: int = 8) -> list[dict]:
+        """第一步：keyword -> 产品列表 [{asin, title}]。title 用于相关性校验。"""
         actor = self.actors.get("amazon_search")
         if not actor:
             return []
 
-        def _sync() -> list[str]:
+        def _sync() -> list[dict]:
             try:
                 resp = requests.post(
                     _APIFY_RUN_URL.format(actor=actor),
-                    json={"keyword": query, "maxResults": limit},
+                    json={"keyword": keyword, "maxResults": limit},
                     params={"token": self.token},
                     timeout=120,
                 )
@@ -167,7 +244,19 @@ class ApifyReviewScraper:
                 rows = resp.json() if resp.content else []
                 if not isinstance(rows, list):
                     return []
-                return [r.get("asin") for r in rows if isinstance(r, dict) and r.get("asin")]
+                products = []
+                for r in rows:
+                    if isinstance(r, dict) and r.get("asin"):
+                        products.append(
+                            {
+                                "asin": r.get("asin"),
+                                "title": str(
+                                    r.get("title") or r.get("name")
+                                    or r.get("productName") or ""
+                                ),
+                            }
+                        )
+                return products[:limit]
             except Exception as exc:
                 logger.warning(f"[apify:amazon-search] 失败: {exc}")
                 return []
@@ -211,15 +300,20 @@ class FallbackSearchReviewScraper:
 
     name = "web_fallback"
 
-    def __init__(self, search_fn: SearchFn, max_queries: int = 4):
+    def __init__(self, search_fn: SearchFn, target_market: str = "US", max_queries: int = 4):
         self.search_fn = search_fn
+        self.target_market = target_market
         self.max_queries = max_queries
 
     async def scrape(
-        self, query: str, platforms: list[str], max_reviews: int
+        self, query: str, platforms: list[str], max_reviews: int,
+        *, search_keyword: str | None = None,
     ) -> list[ReviewItem]:
         queries = build_ecommerce_queries(
-            query=query, target_market="US", intent="review", max_queries=self.max_queries
+            query=query,
+            target_market=self.target_market,
+            intent="review",
+            max_queries=self.max_queries,
         )
         from multi_agents.ecommerce.tools.product_search import search_sources
 

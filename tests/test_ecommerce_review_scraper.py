@@ -6,6 +6,8 @@ from multi_agents.ecommerce.tools.review_scraper import (
     ApifyReviewScraper,
     FallbackSearchReviewScraper,
     ReviewItem,
+    _category_terms,
+    _filter_relevant_products,
     get_review_scraper,
 )
 
@@ -58,7 +60,10 @@ async def test_apify_scraper_two_step_amazon(monkeypatch):
     def fake_post(url, json=None, params=None, timeout=None):
         assert params["token"] == "fake-token"
         if "amazon-search-scraper" in url:
-            return _FakeResp([{"asin": "B0XXX1"}, {"asin": "B0XXX2"}])
+            return _FakeResp([
+                {"asin": "B0XXX1", "title": "Portable USB Rechargeable Blender"},
+                {"asin": "B0XXX2", "title": "Mini Personal Blender for Shakes"},
+            ])
         if "amazon-reviews-extractor" in url:
             return _FakeResp([
                 {"rating": "4", "reviewText": "Works but battery dies fast.",
@@ -143,6 +148,27 @@ async def test_fallback_scraper_extracts_from_search():
     assert any("battery" in it.review_text or "leak" in it.review_text for it in items)
 
 
+@pytest.mark.asyncio
+async def test_fallback_scraper_uses_target_market_in_queries():
+    seen_queries = []
+
+    async def fake_search(query, max_results):
+        seen_queries.append(query)
+        return [
+            {
+                "title": "Review",
+                "href": "https://example.com/de-review",
+                "body": "Customers complain about battery life.",
+            }
+        ]
+
+    scraper = FallbackSearchReviewScraper(fake_search, target_market="DE")
+    await scraper.scrape("portable blender", ["amazon"], 3)
+
+    assert seen_queries
+    assert any("DE" in query for query in seen_queries)
+
+
 # ---------------------------------------------------------------------------
 # review_insight 集成：Apify 空 → 自动降级 Fallback
 # ---------------------------------------------------------------------------
@@ -179,3 +205,157 @@ async def test_review_insight_falls_back_when_apify_empty(monkeypatch):
     audit = [a for a in updated["audit_log"] if a["agent"] == "ReviewInsightAgent"][0]
     assert audit["review_source"] == "web_fallback"
     assert audit["fallback_reason"] is not None
+
+
+@pytest.mark.asyncio
+async def test_review_insight_fallback_preserves_target_market(monkeypatch):
+    monkeypatch.setenv("APIFY_API_TOKEN", "fake-token")
+
+    import multi_agents.ecommerce.tools.review_scraper as mod
+
+    monkeypatch.setattr(mod.requests, "post", lambda *a, **k: _FakeResp([]))
+
+    seen_queries = []
+
+    async def fake_search(query, max_results):
+        seen_queries.append(query)
+        return [
+            {
+                "title": "R",
+                "href": "https://example.com/de-r",
+                "body": "Customers complain about battery life.",
+            }
+        ]
+
+    from multi_agents.ecommerce.agents.planner import run_planner
+    from multi_agents.ecommerce.agents.review_insight import run_review_insight
+    from multi_agents.ecommerce.state import create_initial_state
+
+    state = run_planner(create_initial_state("portable blender", target_market="DE"))
+    updated = await run_review_insight(state, search_fn=fake_search)
+
+    assert updated["review_result"]["review_source"] == "web_fallback"
+    assert seen_queries
+    assert any("DE" in query for query in seen_queries)
+
+
+# ---------------------------------------------------------------------------
+# 产品相关性校验：挡掉「搜音箱返回手机」这类跑偏
+# ---------------------------------------------------------------------------
+
+
+def test_category_terms_strips_generic_modifiers():
+    # bluetooth/wireless/portable 是通用修饰词，过滤后只剩品类核心词
+    assert _category_terms("bluetooth speaker") == ["speaker"]
+    assert _category_terms("portable blender") == ["blender"]
+    assert _category_terms("automatic pet feeder") == ["automatic", "pet", "feeder"]
+    assert _category_terms("蓝牙音箱") == []  # 纯中文取不到英文 token
+
+
+def test_filter_relevant_products_passes_matching():
+    products = [
+        {"asin": "A1", "title": "Portable Bluetooth Speaker"},
+        {"asin": "A2", "title": "Waterproof Speaker"},
+    ]
+    relevant = _filter_relevant_products(products, "bluetooth speaker")
+    assert len(relevant) == 2  # 两个都含品类词 speaker
+
+
+def test_filter_relevant_products_blocks_phones_as_speakers():
+    # 复现真实 bug：搜蓝牙音箱，Apify 返回三星手机（标题含 bluetooth 但不含 speaker）
+    products = [
+        {"asin": "B0G4SW96R4", "title": "Samsung Galaxy S26 Unlocked Smartphone"},
+        {"asin": "B0FXY18C1J", "title": "Samsung Galaxy A17 5G Smart Phone"},
+    ]
+    relevant = _filter_relevant_products(products, "bluetooth speaker")
+    assert relevant == []  # 手机不含品类词 speaker → 拦截，绝不拿手机评论冒充音箱
+
+
+@pytest.mark.asyncio
+async def test_apify_scraper_irrelevant_search_returns_empty(monkeypatch):
+    """集成验证：search 返回不相关产品（手机）→ scrape 返回 []（交给上层降级）。"""
+    def fake_post(url, json=None, params=None, timeout=None):
+        if "amazon-search-scraper" in url:
+            return _FakeResp([
+                {"asin": "B0G4SW96R4", "title": "Samsung Galaxy S26 Smartphone"},
+                {"asin": "B0FXY18C1J", "title": "Samsung Galaxy A17 Smart Phone"},
+            ])
+        return _FakeResp([  # reviews actor 本能抓到，但不会走到这步
+            {"rating": "4", "reviewText": "great phone", "productUrl": "x"}
+        ])
+
+    monkeypatch.setenv("APIFY_API_TOKEN", "fake-token")
+    import multi_agents.ecommerce.tools.review_scraper as mod
+    monkeypatch.setattr(mod.requests, "post", fake_post)
+
+    scraper, _ = get_review_scraper()
+    items = await scraper.scrape("bluetooth speaker", ["amazon"], 5)
+    assert items == []  # 相关性校验拦截，绝不返回手机评论
+
+
+# ---------------------------------------------------------------------------
+# keyword 中英映射：_to_search_keyword
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_to_search_keyword_translates_chinese():
+    async def fake_llm(system, user):
+        return "bluetooth speaker"
+
+    from multi_agents.ecommerce.agents.review_insight import _to_search_keyword
+    kw = await _to_search_keyword(fake_llm, "蓝牙音箱")
+    assert kw == "bluetooth speaker"
+
+
+@pytest.mark.asyncio
+async def test_to_search_keyword_falls_back_without_llm():
+    from multi_agents.ecommerce.agents.review_insight import _to_search_keyword
+    kw = await _to_search_keyword(None, "蓝牙音箱")
+    assert kw == "蓝牙音箱"  # 无 llm_fn → 回退原 query
+
+
+@pytest.mark.asyncio
+async def test_to_search_keyword_strips_punctuation():
+    async def fake_llm(system, user):
+        return "Bluetooth Speaker, best 2026!"
+
+    from multi_agents.ecommerce.agents.review_insight import _to_search_keyword
+    kw = await _to_search_keyword(fake_llm, "蓝牙音箱")
+    assert "," not in kw and "!" not in kw
+    assert "bluetooth speaker" in kw
+
+
+@pytest.mark.asyncio
+async def test_review_insight_passes_search_keyword(monkeypatch):
+    """Apify search 返回相关产品 → 正常抓评论，且 review_source=apify、记录 search_keyword。"""
+    monkeypatch.setenv("APIFY_API_TOKEN", "fake-token")
+    captured = {"search_keywords": []}
+
+    def fake_post(url, json=None, params=None, timeout=None):
+        if "amazon-search-scraper" in url:
+            if isinstance(json, dict):
+                captured["search_keywords"].append(json.get("keyword"))
+            return _FakeResp([{"asin": "B0SPK1", "title": "Portable Bluetooth Speaker"}])
+        if "amazon-reviews-extractor" in url:
+            return _FakeResp([{"rating": "5", "reviewText": "Loud and clear sound.", "productUrl": "x"}])
+        return _FakeResp([])
+
+    import multi_agents.ecommerce.tools.review_scraper as mod
+    monkeypatch.setattr(mod.requests, "post", fake_post)
+
+    async def fake_llm(system, user):
+        return "bluetooth speaker"  # 翻译
+
+    from multi_agents.ecommerce.agents.planner import run_planner
+    from multi_agents.ecommerce.agents.review_insight import run_review_insight
+    from multi_agents.ecommerce.state import create_initial_state
+
+    state = run_planner(create_initial_state("蓝牙音箱"))
+    updated = await run_review_insight(state, search_fn=None, llm_fn=fake_llm)
+
+    rr = updated["review_result"]
+    assert rr["search_keyword"] == "bluetooth speaker"   # 翻译生效
+    assert rr["review_source"] == "apify"                 # 相关产品通过校验，未降级
+    assert "bluetooth speaker" in captured["search_keywords"]  # 翻译后的英文 keyword 真的传给了 Amazon search
+    assert rr["review_count"] >= 1
