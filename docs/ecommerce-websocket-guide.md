@@ -61,6 +61,11 @@ async def ecommerce_websocket(websocket: WebSocket):
 
 **对应业务侧**（`graph.py`）：业务在每个阶段调 `progress_callback("planner_done", {...})`，这个调用最终就是后端的 `websocket.send_json`。业务和 WS 之间**只靠一个函数参数**耦合，非常干净。
 
+> **当前架构下 WS 层完全稳定**：业务侧后续演进都不影响 WS 通信——
+> - trend / competitor / review 的 summary 全部 LLM 化（DeepSeek 生成，规则兜底）
+> - review 走**双数据源**（`review_scraper`：有 `APIFY_API_TOKEN` 时优先抓 Amazon/Reddit 真实评论，失败自动降级 Tavily）
+> - 这些只让 `done` 事件的 payload 更丰富（多了 `review_result` / `evaluation_summary` / `review_source` 等字段，见第 5 节），WS 推进度/收结果的机制一文不变。
+
 ---
 
 ## 3. 前端编程（浏览器 WebSocket API）
@@ -143,7 +148,7 @@ ws.onclose = () => { setConn("已断开"); };                // ⑤ 连接关闭
 |------|------|------|
 | 前端→后端 | `{query, target_market, platforms, depth, use_llm}` | onopen 时发一次（无 event 字段） |
 | 后端→前端 | `{"event": "start" / "planner_done" / "research_running" / "research_done" / "scoring_done" / "report_done" / "quality_done", ...}` | 进度事件 |
-| 后端→前端 | `{"event": "done", report, opportunity_score, quality_check, audit_log, ...}` | 最终完整结果 |
+| 后端→前端 | `{"event": "done", report, opportunity_score, quality_check, audit_log, trend_result, competitor_result, review_result, evaluation_summary, output_paths, ...}` | 最终完整结果（`_summarize` 汇总，含双数据源 `review_result.review_source` / `evaluation_summary.review_count` 等） |
 | 后端→前端 | `{"event": "error", "error": "..."}` | 异常 |
 
 前端 `onmessage` 里就是 `switch(data.event)`：`done` 渲染结果、`error` 报错、其它更新进度。
