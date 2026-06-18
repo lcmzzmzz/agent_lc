@@ -21,6 +21,7 @@ import asyncio
 import datetime
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -89,6 +90,27 @@ def _teardown_run_log(handler: logging.FileHandler) -> None:
     handler.close()
 
 
+def _resolve_search_fn(search_fn: SearchFn | None) -> SearchFn:
+    """按 ECOMMERCE_SEARCH_BACKEND 选择检索源：apify 或默认 tavily。
+
+    - 显式传入 search_fn 优先（测试/程序化用）
+    - ECOMMERCE_SEARCH_BACKEND=apify 且 APIFY_API_TOKEN 已配 → Apify
+    - 否则 → Tavily（默认检索器）
+    """
+    if search_fn is not None:
+        return search_fn
+    backend = os.environ.get("ECOMMERCE_SEARCH_BACKEND", "tavily").strip().lower()
+    if backend == "apify":
+        try:
+            from multi_agents.ecommerce.tools.apify_search import make_apify_search_fn
+
+            logger.info("[runner] 检索源: Apify")
+            return make_apify_search_fn()
+        except Exception as exc:
+            logger.warning(f"[runner] Apify 不可用({exc})，回退 Tavily")
+    return default_search_fn
+
+
 async def run_ecommerce_research(
     *,
     query: str,
@@ -115,7 +137,7 @@ async def run_ecommerce_research(
         )
         final_state = await run_ecommerce_graph(
             state,
-            search_fn=search_fn or default_search_fn,
+            search_fn=_resolve_search_fn(search_fn),
             llm_fn=llm_fn,
             progress_callback=progress_callback,
         )
