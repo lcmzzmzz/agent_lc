@@ -31,7 +31,7 @@ EcomResearcher 是在开源 [GPT Researcher](https://github.com/assafelovic/gpt-
 | 前端 | 原生 HTML/CSS/JS（无构建步骤），Chart.js / marked.js / DOMPurify（CDN） |
 | LLM | 任意 OpenAI 兼容模型（DeepSeek / 智谱 GLM / OpenAI），通过 `GenericLLMProvider` |
 | 检索 | GPT Researcher 检索器（Tavily / DuckDuckGo / Google ...） |
-| 测试 | pytest（asyncio_mode=strict），33 个单测 |
+| 测试 | pytest（asyncio_mode=strict），47 个单测 |
 | Python | 3.10+（TypedDict total=False 兼容） |
 
 ---
@@ -74,7 +74,7 @@ EcomResearcher 是在开源 [GPT Researcher](https://github.com/assafelovic/gpt-
 ┌───────────────────────────▼─────────────────────────────────┐
 │  工具/支撑层                                                  │
 │    tools/   : source_normalizer / product_search /           │
-│               review_extractor (注入式 SearchFn)             │
+│               review_extractor / review_scraper(双数据源)    │
 │    llm_helper.py : 注入式 LlmFn + JSON 提取 + 降级            │
 │    schemas/ : scoring(加权) / report(章节)                    │
 │    config.py: fast/standard/deep 三档                        │
@@ -114,7 +114,8 @@ multi_agents/ecommerce/
 ├── tools/
 │   ├── source_normalizer.py  # 统一数据源格式 + 推断 source_type
 │   ├── product_search.py     # 查询构造 + search_sources (注入 search_fn)
-│   └── review_extractor.py   # 关键词抽取痛点句子
+│   ├── review_extractor.py   # 关键词抽取痛点句子
+│   └── review_scraper.py     # 双数据源评论抓取(Apify两步 + Tavily兜底, 可插拔 ReviewSource)
 └── schemas/
     ├── scoring.py           # calculate_overall_score (6 维加权)
     └── report.py            # REPORT_SECTIONS + 标题
@@ -123,7 +124,7 @@ backend/server/ecommerce_api.py   # FastAPI 路由 (POST + WS)
 frontend/ecommerce.html           # 研究页 (表单+进度+雷达图+报告)
 frontend/ecommerce-eval.html      # 评估对比页 (3 case 横向对比)
 scripts/export_ecommerce_demo_cases.py  # 标准 demo 导出脚本
-tests/test_ecommerce_*.py         # 33 个单测
+tests/test_ecommerce_*.py         # 47 个单测
 ```
 
 ---
@@ -194,7 +195,8 @@ class EcommerceResearchState(TypedDict, total=False):
 2. `search_sources()`：逐条 query 调注入的 `search_fn` → `normalize_source` 统一格式 → 按 url 去重 → 截断到 `max_sources_per_agent`
 3. 产出结果（summary / score / key_findings / evidence / confidence）
 4. **失败降级**：检索异常或数据不足 → 走 fallback（低置信度、低分），写 `audit_log`（status=partial + warning），**不抛异常中断**
-5. `ReviewInsightAgent` 额外做：`extract_review_insights` 抽取英文抱怨句 → 若 `llm_fn` 可用，LLM 归纳为**中文痛点**（`pain_points_language=zh`）；不可用则保留英文（`en`）
+5. `ReviewInsightAgent` 走**双数据源评论抓取**（见 8.4）：`get_review_scraper()` 选源——有 `APIFY_API_TOKEN` 时 Apify 抓 Amazon 真实评论（两步：关键词→ASIN→评论），失败/无 token 自动降级 Tavily 搜网页抽评论句；拿到评论后 LLM 归纳为**中文痛点**（`pain_points_language=zh`），不可用保留原文。audit 记录 `review_source/review_count/platforms/fallback_reason`
+6. trend/competitor 的 summary 也是 **LLM 基于真实检索资料生成**（`summary_source=llm`），失败回退模板（`summary_source=template`）
 
 并发结束后，`graph` 合并三方 `*_result` + 各自 `audit_log` / `errors` 回主 state。
 
@@ -265,8 +267,14 @@ evidence_score 按证据数算；overall 按固定权重重算
 ```
 `_score_from_llm()` 逐字段容错（null/坏字符串→回退该字段规则值），保证部分字段坏不会整体崩。
 
-### 8.4 评论中文归纳（`review_insight.py`）
-英文 Tavily 结果 → 关键词抽抱怨句 → LLM 归纳为 3-6 条中文痛点。LLM 不可用则保留英文原文并标 `pain_points_language=en`，绝不中断。
+### 8.4 双数据源评论抓取（`review_insight.py` + `tools/review_scraper.py`）
+评论走可插拔双数据源（统一接口 `ReviewSource.scrape(query, platforms, max_reviews)`）：
+- **Apify 真实评论**（有 `APIFY_API_TOKEN`）：Amazon **两步**——关键词搜产品拿 ASIN（`igview-owner~amazon-search-scraper`）→ ASIN 抓评论（`web_wanderer~amazon-reviews-extractor`），返回结构化 `ReviewItem`（rating/date/helpful/product_url）
+- **Tavily 兜底**（无 token / Apify 失败）：搜含评论的网页 → 抽取评论句包成 `ReviewItem`（platform=web）
+- 工厂 `get_review_scraper()` 自动选源；Apify 运行时失败/返回空 → review_insight 捕获后切 Fallback（`fallback_reason` 记录原因）
+- 拿到评论后统一 LLM 归纳中文痛点（`pain_points_language=zh`），LLM 不可用保留原文，绝不中断
+- actorId 用 `~` 格式（`/` 在 run-sync 端点会 404）；Reddit/TikTok/Google Maps 接口已预留，加 actor 即扩展
+- 真实测试：free plan 第一步（关键词→ASIN）通，第二步评论抓不到（需 Apify 付费 proxy），但**降级完美工作**（见 `docs/ecommerce-apify-setup.md`）
 
 ### 8.5 失败降级（四层）
 | 层 | 失败场景 | 降级 |
@@ -330,7 +338,9 @@ python -m multi_agents.ecommerce --query "portable blender" --market US --depth 
   "duration_ms": 42000,
   "recommendation": "...",
   "scored_by": "llm",
-  "quality_passed": true
+  "quality_passed": true,
+  "review_source": "apify",   # apify | web_fallback（评论来自哪）
+  "review_count": 12          # 抓到的评论数
 }
 ```
 供 runner 写 `evaluation.json`、demo 导出、评估对比页统一消费。
@@ -390,9 +400,10 @@ python -m pytest tests/test_ecommerce_state.py tests/test_ecommerce_tools.py \
 
 ## 15. 扩展点
 
-- **新检索源**：实现 `SearchFn`，注入 runner（如 Apify 抓真实 Amazon 评论）
+- **双数据源（已实现）**：Tavily 广域检索 + Apify 平台评论（Amazon 两步、Reddit/TikTok/GMaps 接口预留），无 token 或 Apify 失败自动降级 Tavily
+- **新评论平台**：实现一个 `ReviewSource`（如 TikTok/Google Maps scraper）加进 `DEFAULT_ACTORS` 即可
+- **Apify 真实评论抓取**：free plan 抓不到 Amazon 评论正文（需付费 residential proxy / Pay-Per-Result actor），token 不变即可生效
 - **新垂直领域**：复制 `ecommerce/` 结构改 prompt/评分维度（如 AI 工具调研）
-- **研究 Agent summary 也 LLM 化**：目前仅 review/scoring 用 LLM，trend/competitor summary 是模板
 - **持久化**：目前文件存储，可接数据库
 - **更多质检维度**：logic_consistency 目前是基线，可接 LLM 交叉校验
 
