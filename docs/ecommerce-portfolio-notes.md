@@ -29,7 +29,7 @@
 
 ## 面试可讲的工程点
 
-- **并发编排**：`asyncio.gather` 三路研究 + 独立子状态，避免共享可变集合在协程间交错。
+- **并发编排**：LangGraph `StateGraph` fork-join（`planner→{trend,competitor,review}→scoring`），由图原生并发执行；`Annotated[list, operator.add]` reducer 自动合并三分支的 audit_log/errors，governance 靠闭包共享同一 dict（不走 channel，避免并发写冲突）。
 - **可观测性**：每次研究生成独立 log 文件，记录全链路 `INFO/WARNING/ERROR`；每个 Agent 写 `audit_log`（status / duration_ms / source_count / confidence / warning）。
 - **容错**：检索失败 / JSON 异常 / LLM 限流均降级；批量导出时单 case 失败不中断其余 case，manifest 照常写出。
 - **可测试**：55 个单测，注入式 `search_fn` / `llm_fn` 解耦网络与 LLM，测试不触网不花钱。

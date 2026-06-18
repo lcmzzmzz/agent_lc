@@ -26,12 +26,12 @@ EcomResearcher 是在开源 [GPT Researcher](https://github.com/assafelovic/gpt-
 
 | 层 | 技术 |
 |----|------|
-| 编排 | Python asyncio（`asyncio.gather` 并发），LangGraph 风格状态机 |
+| 编排 | LangGraph `StateGraph`（`START→planner→{trend,competitor,review}` fork-join `→scoring→writer→quality→END`，`Annotated[list,operator.add]` reducer 合并并发分支） |
 | Web | FastAPI（REST + WebSocket）、uvicorn |
 | 前端 | 原生 HTML/CSS/JS（无构建步骤），Chart.js / marked.js / DOMPurify（CDN） |
 | LLM | 任意 OpenAI 兼容模型（DeepSeek / 智谱 GLM / OpenAI），通过 `GenericLLMProvider` |
 | 检索 | GPT Researcher 检索器（Tavily / DuckDuckGo / Google ...） |
-| 测试 | pytest（asyncio_mode=strict），47 个单测 |
+| 测试 | pytest（asyncio_mode=strict），84 个单测 |
 | Python | 3.10+（TypedDict total=False 兼容） |
 
 ---
@@ -54,11 +54,13 @@ EcomResearcher 是在开源 [GPT Researcher](https://github.com/assafelovic/gpt-
 └───────────────────────────┬─────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
-│  Graph 编排层 (graph.py)                                     │
-│    run_ecommerce_graph():                                    │
-│      planner → [trend ∥ competitor ∥ review] →              │
-│      scoring → writer → quality                              │
-│      (progress_callback 向外推送阶段事件 + 写 logger)         │
+│  Graph 编排层 (graph.py —— 真正的 LangGraph StateGraph)      │
+│    build_ecommerce_graph() → compiled graph                  │
+│      START→planner→{trend∥competitor∥review}→scoring        │
+│      →writer→quality→END  (fork-join 由图原生并发)            │
+│      audit_log/errors: Annotated reducer 自动合并三分支       │
+│      governance: 闭包共享同一 dict(不走 channel)              │
+│      (progress_callback 闭包推送阶段事件 + 写 logger)         │
 └───────────────────────────┬─────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
@@ -188,7 +190,7 @@ class EcommerceResearchState(TypedDict, total=False):
 - 写一条 `audit_log`（duration_ms / status）
 
 ### Step 2：三路并发研究（`graph.py` + 三个研究 Agent，异步）
-`asyncio.gather` 同时启动三个研究节点。每个节点拿到 `_make_child_state(state)` 构造的**独立子状态**（独立 `audit_log` / `errors`，避免并发写共享集合）。
+LangGraph StateGraph 的 fork-join 同时启动三个研究节点。每个节点在**全新的 `audit_log` / `errors`** 上 append、只返回增量，由 `Annotated[list, operator.add]` reducer 自动拼接（避免并发写共享集合）。
 
 每个研究节点的内部 SOP（以 `TrendResearchAgent` 为例）：
 1. 从 `research_plan` 取自己的 queries
@@ -249,8 +251,8 @@ class EcommerceResearchState(TypedDict, total=False):
 
 ## 8. 关键机制
 
-### 8.1 并发编排（asyncio.gather + 独立子状态）
-三个研究节点用 `asyncio.gather` 并发。为避免三个协程并发写同一个 `audit_log` 列表导致交错，`graph._make_child_state()` 给每个节点一份**独立子状态**（独立空 `audit_log` / `errors`，只读字段共享），并发结束后由 graph 统一合并。
+### 8.1 并发编排（LangGraph StateGraph fork-join + reducer）
+三个研究节点是图里的三条 fan-out 边（`planner→trend/competitor/review`），由 langgraph 在一个 superstep 内并发执行，`scoring` 节点自动 barrier 等三者完成。为避免并发写同一个 `audit_log` 列表导致冲突，每个节点在**全新空** `audit_log`/`errors` 上 append、只返回增量，由 `EcommerceGraphState` 的 `Annotated[list, operator.add]` reducer 自动拼接。`governance` 不走图 channel（plain channel 并发写会触发 `InvalidUpdateError`），改由 `build_ecommerce_graph` 闭包捕获同一 dict 引用原地修改。
 
 ### 8.2 注入式依赖（search_fn / llm_fn）
 - `SearchFn = async (query, max_results) -> list[dict]`：检索器抽象。生产用 `default_search_fn`（复用 GPT Researcher 默认检索器，`asyncio.to_thread` 包同步调用实现真并发）；测试用 `fake_search`（不触网）。
