@@ -114,3 +114,21 @@ ECOMMERCE_SEARCH_BACKEND=tavily
 - **注入式**：Apify 实现成一个标准 `SearchFn = async (query, max_results) -> list[dict]`，和 Tavily 接口完全一致。`review_insight` 等 Agent 不关心数据来自哪，只消费标准化后的 source。
 - **可降级**：Apify 不可用时自动回退 Tavily，保证流程不崩。
 - **可扩展**：以后接 SerpAPI / Rainforest API / 自建爬虫，只要再实现一个 `SearchFn` 并在 `_resolve_search_fn` 里加一个 backend 分支即可。
+
+## 真实测试结论（2026-06-18，free plan 实测）
+
+Apify free plan（$5 额度）实测各平台 actor 的真实表现：
+
+| 平台 | actor | 结果 |
+|------|-------|------|
+| Amazon 搜产品（keyword→ASIN） | `igview-owner~amazon-search-scraper` | ✅ 拿到真实 ASIN（第一步通） |
+| Amazon 抓评论（ASIN→评论） | `web_wanderer~amazon-reviews-extractor` | ❌ 返回 0 条（free plan 抓不到，需付费 residential proxy） |
+| Google Maps 评论 | `compass~Google-Maps-Reviews-Scraper` | ❌ run FAILED（Pay-Per-Result 付费 actor） |
+| TikTok 评论 | `clockworks~tiktok-comments-scraper` | 需具体视频 URL，未测 |
+
+**结论**：Amazon 评论反爬最强，热门评论 actor 多为 Pay-Per-Result，free plan 抓不到评论正文。但**架构与降级完全工作**：
+- 第一步（关键词→ASIN）真实可用
+- 第二步评论抓取失败时自动降级 Tavily（`review_source=web_fallback`），DeepSeek 照常归纳中文痛点，报告照常产出（HTTP 200）
+- 想抓真实评论：充值 / 开 residential proxy / 换付费 actor，**token 不变即可生效**（代码侧 `ApifyReviewScraper` 已实现两步 + 多平台接口预留）
+
+> 这套「Apify 失败 → 自动降级 Tavily」的容错，本身就是项目的一个工程亮点。
