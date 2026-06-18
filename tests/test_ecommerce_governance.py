@@ -71,3 +71,73 @@ def test_evaluation_summary_includes_governance_metrics():
     assert summary["llm_call_count"] == 0
     assert summary["search_call_count"] == 0
     assert summary["scrape_call_count"] == 0
+
+
+import pytest
+
+from multi_agents.ecommerce.runtime.policy_guard import (
+    PolicyViolation,
+    assert_tool_allowed,
+    is_safe_url,
+    redact_secrets,
+    sanitize_source_url,
+    validate_research_request,
+)
+
+
+def test_validate_research_request_rejects_invalid_depth():
+    with pytest.raises(PolicyViolation) as exc:
+        validate_research_request(
+            query="portable blender",
+            target_market="US",
+            platforms=["amazon"],
+            depth="extreme",
+        )
+
+    assert "depth" in str(exc.value)
+
+
+def test_validate_research_request_rejects_invalid_market():
+    with pytest.raises(PolicyViolation) as exc:
+        validate_research_request(
+            query="portable blender",
+            target_market="CN",
+            platforms=["amazon"],
+            depth="standard",
+        )
+
+    assert "target_market" in str(exc.value)
+
+
+def test_policy_blocks_unsafe_urls():
+    assert is_safe_url("https://example.com/review") is True
+    assert is_safe_url("file:///C:/secret.txt") is False
+    assert is_safe_url("http://localhost:8000/admin") is False
+    assert is_safe_url("http://127.0.0.1:8000/admin") is False
+    assert is_safe_url("http://192.168.1.12/internal") is False
+
+
+def test_sanitize_source_url_drops_unsafe_url():
+    assert sanitize_source_url("file:///C:/secret.txt") == ""
+    assert sanitize_source_url("https://example.com/review") == "https://example.com/review"
+
+
+def test_redact_secrets_masks_sensitive_keys():
+    payload = {
+        "APIFY_API_TOKEN": "apify_api_secret",
+        "authorization": "Bearer secret",
+        "nested": {"password": "pw", "safe": "ok"},
+    }
+
+    redacted = redact_secrets(payload)
+
+    assert redacted["APIFY_API_TOKEN"] == "[REDACTED]"
+    assert redacted["authorization"] == "[REDACTED]"
+    assert redacted["nested"]["password"] == "[REDACTED]"
+    assert redacted["nested"]["safe"] == "ok"
+
+
+def test_tool_permission_boundaries():
+    assert_tool_allowed("TrendResearchAgent", "search")
+    with pytest.raises(PolicyViolation):
+        assert_tool_allowed("ReportWriterAgent", "search")

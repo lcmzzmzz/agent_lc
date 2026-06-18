@@ -29,6 +29,10 @@ from typing import Any
 from multi_agents.ecommerce.evaluation import build_evaluation_summary
 from multi_agents.ecommerce.graph import ProgressFn, run_ecommerce_graph
 from multi_agents.ecommerce.llm_helper import LlmFn
+from multi_agents.ecommerce.runtime.policy_guard import (
+    PolicyViolation,
+    validate_research_request,
+)
 from multi_agents.ecommerce.state import EcommerceResearchState, create_initial_state
 from multi_agents.ecommerce.tools.product_search import SearchFn
 
@@ -128,6 +132,16 @@ async def run_ecommerce_research(
         f"========== 开始研究 query='{query}' market={target_market} "
         f"depth={depth} platforms={platforms or ['amazon','google']} =========="
     )
+    try:
+        validate_research_request(
+            query=query,
+            target_market=target_market,
+            platforms=platforms or ["amazon", "google"],
+            depth=depth,
+        )
+    except PolicyViolation as exc:
+        _teardown_run_log(handler)
+        raise ValueError(str(exc)) from exc
     try:
         state = create_initial_state(
             query=query,

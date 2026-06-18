@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from multi_agents.ecommerce.runtime.policy_guard import sanitize_source_url
 from multi_agents.ecommerce.state import EcommerceSource
 
 
@@ -35,7 +36,9 @@ def infer_source_type(url: str, title: str = "") -> str:
 def normalize_source(raw: dict[str, Any]) -> EcommerceSource:
     """把任意键名结构的原始结果转成统一 EcommerceSource。"""
     title = str(raw.get("title") or raw.get("name") or "Untitled source")
-    url = str(raw.get("url") or raw.get("href") or raw.get("link") or "")
+    url = sanitize_source_url(
+        str(raw.get("url") or raw.get("href") or raw.get("link") or "")
+    )
     snippet = str(
         raw.get("snippet") or raw.get("body") or raw.get("description") or ""
     )

@@ -75,3 +75,24 @@ async def test_runner_degrades_when_search_returns_nothing(tmp_path):
     assert result["final_report"]
     assert result["quality_check"]["passed"] is False
     assert result["quality_check"]["citation_coverage"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_runner_rejects_invalid_depth_before_search(tmp_path):
+    called = False
+
+    async def fake_search(query, max_results):
+        nonlocal called
+        called = True
+        return []
+
+    with pytest.raises(ValueError) as exc:
+        await run_ecommerce_research(
+            query="portable blender",
+            depth="extreme",
+            output_dir=tmp_path,
+            search_fn=fake_search,
+        )
+
+    assert "depth" in str(exc.value)
+    assert called is False
