@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import inspect
 
 import pytest
 
@@ -42,6 +43,12 @@ def test_graph_is_compiled_stategraph():
     nodes = set(app.get_graph().nodes.keys())
     for name in ("planner", "trend", "competitor", "review", "scoring", "writer", "quality"):
         assert name in nodes, f"图里缺 node: {name}"
+
+
+def test_scoring_join_waits_for_all_research_branches():
+    source = inspect.getsource(build_ecommerce_graph)
+
+    assert 'wf.add_edge(["trend", "competitor", "review"], "scoring")' in source
 
 
 # ---------------------------------------------------------------------------

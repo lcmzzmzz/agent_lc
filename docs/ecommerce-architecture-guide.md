@@ -360,7 +360,7 @@ python -m multi_agents.ecommerce --query "portable blender" --market US --depth 
 | `ExecutionGuard` | 包裹高风险调用，提供 timeout / retry / fallback，记录每次重试与降级事件 | `runtime/execution_guard.py` |
 | Telemetry | `record_event` / `summarize_governance` 把上述事件合并进 `state["governance"]` → audit_log → evaluation_summary | `runtime/telemetry.py` |
 
-**关键设计**：`graph._make_child_state` 让并发子状态**共享**主状态的 `governance` dict 引用（trend / competitor / review 的结果字段仍各自独立），因此 review 分支在子状态里记录的降级事件能无损回流到主状态，最终进入 `evaluation.json` 与评估对比页（重试 / 策略拦截 / LLM·Search 调用等列）。
+**关键设计**：`graph._fresh_child` 让并发子状态**共享**主状态的 `governance` dict 引用（trend / competitor / review 的结果字段仍各自独立），因此 review 分支在子状态里记录的降级事件能无损回流到主状态，最终进入 `evaluation.json` 与评估对比页（重试 / 策略拦截 / LLM·Search 调用等列）。
 
 **生产接入点**：
 

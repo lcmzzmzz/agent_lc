@@ -10,7 +10,6 @@ exclude_packages = [
     "uvicorn",
     "jinja2",
     "gpt-researcher",
-    "langgraph"
 ]
 
 with open(r"README.md", "r", encoding="utf-8") as f:

@@ -245,10 +245,8 @@ def build_ecommerce_graph(
     wf.add_edge("planner", "trend")
     wf.add_edge("planner", "competitor")
     wf.add_edge("planner", "review")
-    # join：三路 → scoring（langgraph 自动等三者完成）
-    wf.add_edge("trend", "scoring")
-    wf.add_edge("competitor", "scoring")
-    wf.add_edge("review", "scoring")
+    # join：三路全部完成后才进入 scoring（显式 barrier join）
+    wf.add_edge(["trend", "competitor", "review"], "scoring")
     wf.add_edge("scoring", "writer")
     wf.add_edge("writer", "quality")
     wf.add_edge("quality", END)
