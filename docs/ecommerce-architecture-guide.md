@@ -2,6 +2,63 @@
 
 > 本文档系统讲解 EcomResearcher（跨境电商 AI 选品与市场调研助手）的整体架构、数据流（SOP）、核心组件与关键机制。
 > 面向想读懂这套系统、或在面试中讲清楚它的人。配套：`README.md` / `docs/ecommerce-researcher.md` / `docs/ecommerce-portfolio-notes.md`。
+>
+> **想学源码？先读下一节「§0 源码阅读指南」**——它给出推荐阅读顺序、每个文件的关键设计点、动手验证清单，以及面试深问的 5 个「为什么」。其余章节是按主题组织的参考手册。
+
+---
+
+## 0. 源码阅读指南（先读这一节）
+
+这份文档既是架构参考、也是源码导览。建议**从外到内、从简到繁**读代码，每读完一层能回答一个核心问题。读完一定要动手跑（见末尾清单）。
+
+### 推荐阅读顺序
+
+**① 抓骨架（state → runner，~30 分钟）**
+- `state.py`：整条流程的**共享契约**。先读 `EcommerceResearchState`（每个字段谁写谁读，见 §5）+ `create_initial_state()` + `EcommerceGraphState`（langgraph 的 `Annotated[list, operator.add]` reducer 怎么合并并发分支）。
+- `runner.py::run_ecommerce_research`：端到端入口。6 步：建 state → 建独立 log → 跑 graph → 写 4 类文件 → 写 evaluation → 返回。
+- _读完能回答：一次研究从命令行到报告文件，数据怎么流的？_
+
+**② 啃编排核心（`graph.py`，项目设计的心脏，~45 分钟）**
+- `build_ecommerce_graph()` 构建 + compile langgraph StateGraph。边读边想清楚 4 个「为什么」（这是面试最该讲的）：
+  - **拓扑** `planner→{trend,competitor,review}→scoring→writer→quality`（§8.1）：为什么用图的 fork-join 而非 `asyncio.gather`？
+  - **`_fresh_child()` + 节点返回增量**：为什么在全新 `[]` 上 append、只返回增量？（reducer 会把全量再 add 一遍 → 重复累加）
+  - **`governance = state["governance"]` 闭包共享、不进 channel**：为什么不放 state channel？（plain channel 并发写触发 `InvalidUpdateError`）
+  - **`_research_node` 用 bare name 调 `run_*`**：为什么不用闭包绑定？（支持测试 `monkeypatch.setattr`）
+- _读完能回答：三路怎么并发？audit_log 怎么合并？governance 怎么不冲突？_
+
+**③ 读 7 个 Agent（按「纯计算 → 有降级 → 最复杂」，1-2 小时）**
+1. `planner.py`（最简，同步模板）：看 `finalize_audit()` 怎么写审计。
+2. `report_writer.py` / `quality_reviewer.py`（同步拼装/检查）：报告 10 节结构 + 质检维度。
+3. `trend_researcher.py` / `competitor_analyzer.py`（异步，try/except 降级）：**这两个几乎逐行同构**，读一个就懂另一个。看 try/except 怎么把失败软化成 partial。
+4. `opportunity_scorer.py`（LLM 优先 + 规则兜底）：`_score_from_llm` 逐字段容错、confidence 折扣（LLM 降级时 ×0.8）。
+5. `review_insight.py`（最复杂）：Apify→Tavily **双源换源重试** + LLM 中文归纳。这是唯一不该被装饰器统一的业务逻辑。
+- 共性：7 个 agent 结束都调 `agents/audit.py::finalize_audit()` 统一写审计（§8.6）。
+- _读完能回答：每个 agent 失败了怎么办？降级为什么有 3 套而非 1 套？_
+
+**④ 支撑层（tools / runtime / llm_helper / schemas，~45 分钟）**
+- `tools/review_scraper.py` 重点：`_search_products`（字段名 `query`/`maxPages`/`product_title`——**真实踩坑修出来的**，见 portfolio 调试故事）、`_filter_relevant_products`（挡「搜音箱返回手机」）、双源降级。
+- `runtime/` 治理四件套（§11.5）：`policy_guard`（SSRF 防护 + 密钥脱敏）、`budget_manager`（配额计费降级）、`execution_guard`（timeout/retry/fallback）、`telemetry`（事件聚合）。
+- `llm_helper.py`：注入式 `LlmFn` + `llm_json`/`llm_text`（失败软降级）+ `clamp`。
+- `schemas/`：`scoring`（6 维加权）、`report`（章节）。
+- _读完能回答：外部依赖怎么解耦？失败怎么不崩？成本/安全怎么治理？_
+
+**⑤ 接口与验证（~30 分钟）**
+- `backend/server/ecommerce_api.py`（REST + WS，独立 APIRouter）、`frontend/ecommerce*.html`。
+- `tests/test_ecommerce_*.py`（**87 个——测试是最好的文档**）：每个 agent 的 happy path + 降级路径都有单测。尤其 `test_ecommerce_graph_langgraph.py` 是 langgraph 迁移的物证（拓扑/并发/reducer/governance 契约）。
+
+### 动手验证清单（边读边做）
+1. **跑一次**：`python -m multi_agents.ecommerce --query "portable blender"`，看 `outputs/ecommerce/*-report.md` + `logs/ecommerce/*.log`。
+2. **读日志**：按阶段 `[graph] start → planner_done → research_running → ...`，对照源码看每行从哪来。
+3. **改阈值**（如 trend 的 `source_count>=2` → `>=5`）跑测试看哪些挂，理解字段依赖。
+4. **`--no-llm` 跑一次**，对比 `evaluation.json` 的 `scored_by=rule` + confidence（LLM 降级打折后的值）。
+5. **跑 langgraph 物证测试**：`python -m pytest tests/test_ecommerce_graph_langgraph.py -v`。
+
+### 面试深问的 5 个「为什么」（读代码时想清楚）
+1. **governance 走闭包不走 channel**（`graph.py:112`）→ 并发写冲突
+2. **节点返回增量非全量**（`_fresh_child`）→ 否则 reducer 双计
+3. **降级 3 套不统一**（try/except / 双源换源 / 软降级）→ 业务逻辑各异，硬统一风险高（见 §8.5）
+4. **audit 用 `finalize_audit` 统一**（`agents/audit.py`）→ 字段一致、防漏抄
+5. **第三方 API 字段名要实跑验证**（`review_scraper` 的 query/maxPages/product_title）→ 静默失败比报错更危险
 
 ---
 
@@ -31,7 +88,7 @@ EcomResearcher 是在开源 [GPT Researcher](https://github.com/assafelovic/gpt-
 | 前端 | 原生 HTML/CSS/JS（无构建步骤），Chart.js / marked.js / DOMPurify（CDN） |
 | LLM | 任意 OpenAI 兼容模型（DeepSeek / 智谱 GLM / OpenAI），通过 `GenericLLMProvider` |
 | 检索 | GPT Researcher 检索器（Tavily / DuckDuckGo / Google ...） |
-| 测试 | pytest（asyncio_mode=strict），84 个单测 |
+| 测试 | pytest（asyncio_mode=strict），87 个单测 |
 | Python | 3.10+（TypedDict total=False 兼容） |
 
 ---
@@ -126,7 +183,7 @@ backend/server/ecommerce_api.py   # FastAPI 路由 (POST + WS)
 frontend/ecommerce.html           # 研究页 (表单+进度+雷达图+报告)
 frontend/ecommerce-eval.html      # 评估对比页 (3 case 横向对比)
 scripts/export_ecommerce_demo_cases.py  # 标准 demo 导出脚本
-tests/test_ecommerce_*.py         # 47 个单测
+tests/test_ecommerce_*.py         # 87 个单测
 ```
 
 ---
@@ -215,13 +272,13 @@ LangGraph StateGraph 的 fork-join 同时启动三个研究节点。每个节点
   1. 选品结论 / 2. 市场趋势 / 3. 竞品格局 / 4. 用户痛点 / 5. 差异化机会 /
   6. 价格与利润 / 7. 风险因素 / 8. 机会评分(含评分方式+理由) / 9. 是否建议进入 / 10. 引用
 - 引用来自三方 `evidence` 的 url，去重编号
-- 第 7 节强制含「风险」与「销量预测」字样（供质检验证风险披露）
+- 第 7 节列通用方法论风险（数据不完整/样本偏差/成本未验证）；质检的 risk_disclosure 改为基于真实差评痛点判定（不再靠字面"风险"二字，避免循环论证）
 
 ### Step 5：质量检查（`agents/quality_reviewer.py`，同步）
 对最终报告做多维质检：
 - `citation_coverage`：报告含 http(s) 引用数 / 基准
 - `evidence_sufficiency`：三方 evidence 总数 / 基准
-- `risk_disclosure`：是否同时含「风险」+「销量预测」
+- `risk_disclosure`：基于真实差评痛点（`pain_points` 非空）判定；无痛点数据则提示披露不足
 - **过度确定性**：扫描「稳赚/必爆/一定增长/没有风险/保证成功」等表述
 - 产出 `passed` + `issues` 列表
 
@@ -287,7 +344,7 @@ evidence_score 按证据数算；overall 按固定权重重算
 | 批量 | 单个 demo case 抛错 | `export` 脚本 per-case try/except，错误 case 进 manifest 但不中断其余 |
 
 ### 8.6 审计日志（audit_log）
-每个 Agent 结束写一条：`{agent, status(success/partial), duration_ms, source_count, confidence, warning}`。端到端可追溯。
+每个 Agent 结束统一调 `agents/audit.py::finalize_audit()` 写一条基线 6 字段（`{agent, status, duration_ms, source_count, confidence, warning}`）；ReviewInsightAgent 额外透传 `review_source/search_keyword/review_count/platforms/fallback_reason`。端到端可追溯，字段一致防漏抄（原本散在 7 个文件手写）。
 
 ### 8.7 质量评估（quality_check）
 引用覆盖率 / 证据充分度 / 逻辑一致性(基线) / 风险披露 / 过度确定性拦截。`passed` + `issues` 暴露问题。
@@ -362,7 +419,7 @@ python -m multi_agents.ecommerce --query "portable blender" --market US --depth 
 | 模块 | 职责 | 落点 |
 |------|------|------|
 | `PolicyGuard` | 执行前校验请求（query / depth / market / platforms）、Agent 级工具权限、不安全 URL 过滤（file / loopback / 私网）、密钥脱敏 | `runtime/policy_guard.py`，runner 入口 + source_normalizer |
-| `BudgetManager` | 执行中按 LLM / search / scrape / external_api 配额计费，超额自动降级（如 LLM 预算耗尽 → 规则评分） | `runtime/budget_manager.py`，scoring / search / scraper |
+| `BudgetManager` | 执行中按 LLM / search / external_api 配额计费，超额自动降级（如 LLM 预算耗尽 → 规则评分） | `runtime/budget_manager.py`，scoring / search / scraper |
 | `ExecutionGuard` | 包裹高风险调用，提供 timeout / retry / fallback，记录每次重试与降级事件 | `runtime/execution_guard.py` |
 | Telemetry | `record_event` / `summarize_governance` 把上述事件合并进 `state["governance"]` → audit_log → evaluation_summary | `runtime/telemetry.py` |
 
@@ -375,7 +432,7 @@ python -m multi_agents.ecommerce --query "portable blender" --market US --depth 
 - `ApifyReviewScraper` 在 Amazon product search / review fetch 两类 `requests.post` 前检查 `external_api` 预算；预算耗尽时不会发出外部 API 请求，而是返回空结果交给 ReviewInsightAgent 降级 Tavily。
 - `ExecutionGuard` 写入 governance error event 前会通过 `PolicyGuard.redact_secrets()` 对 `TOKEN=...` / `api_key=...` / `password=...` 等错误消息做脱敏。
 
-预算阈值可通过环境变量 `ECOMMERCE_MAX_LLM_CALLS` / `ECOMMERCE_MAX_SEARCH_CALLS` / `ECOMMERCE_MAX_SCRAPE_CALLS` / `ECOMMERCE_MAX_EXTERNAL_API_CALLS` / `ECOMMERCE_MAX_ESTIMATED_COST_USD` 覆盖（见 `config.get_budget_config()`）。
+预算阈值可通过环境变量 `ECOMMERCE_MAX_LLM_CALLS` / `ECOMMERCE_MAX_SEARCH_CALLS` / `ECOMMERCE_MAX_EXTERNAL_API_CALLS` / `ECOMMERCE_MAX_ESTIMATED_COST_USD` 覆盖（见 `config.get_budget_config()`）。
 
 ---
 
