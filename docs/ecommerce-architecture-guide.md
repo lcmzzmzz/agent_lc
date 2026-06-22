@@ -349,8 +349,73 @@ evidence_score 按证据数算；overall 按固定权重重算
 ### 8.7 质量评估（quality_check）
 引用覆盖率 / 证据充分度 / 逻辑一致性(基线) / 风险披露 / 过度确定性拦截。`passed` + `issues` 暴露问题。
 
-### 8.8 全链路日志文件
-每次研究在 `logs/ecommerce/<时间戳>_<关键词>.log` 写独立 log，绑定 `multi_agents.ecommerce` logger，捕获 graph 阶段 / 各 Agent / LLM 调用失败的 INFO/WARNING/ERROR。事后排查友好。
+### 8.8 全链路日志文件（Python logging 落地 runner.py）
+
+每次研究在 `logs/ecommerce/<时间戳>_<关键词>.log` 写独立 log，绑定 `multi_agents.ecommerce` logger，捕获 graph 阶段 / 各 Agent / LLM 调用失败的 INFO/WARNING/ERROR。事后排查友好。实现见 `runner.py::_setup_run_log` / `_teardown_run_log`，原理是 Python 标准 `logging` 模块。
+
+#### 四角色：一条日志的旅程
+
+```
+代码 logger.info("xxx")
+   → Logger（发言人）
+       → 闸① Logger 自己的 level
+           → Handler（出口：文件 / 控制台）
+               → 闸② Handler 的 level
+                   → Formatter（格式化）→ 落盘
+```
+
+| 角色 | 作用 | 本项目对应 |
+|------|------|-----------|
+| Logger | 代码里喊话的人 | `logging.getLogger("multi_agents.ecommerce")`（`runner.py:42` 模块级） |
+| Handler | 出口，决定写到哪 | `logging.FileHandler(log_path)`（写文件，utf-8 支持中文） |
+| Level | 门禁，多重要才放行 | `INFO`（`DEBUG < INFO < WARNING < ERROR < CRITICAL`） |
+| Formatter | 每行长啥样 | `_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s - %(message)s"` |
+
+#### 关键坑：两道 level 闸都要开
+
+一条 INFO 日志要**连过两道闸**才写出去：
+
+- **闸① Logger 自己的 level**（Python 默认 `WARNING`！）
+- **闸② Handler 的 level**（`_setup_run_log` 设了 `INFO`）
+
+只开闸②、不开闸① → INFO 在闸①就被默认的 WARNING 拦掉 → **文件是空的**。所以 `_setup_run_log` 末尾主动把闸①也开到 INFO：
+
+```python
+if ecommerce_logger.level == logging.NOTSET or ecommerce_logger.level > logging.INFO:
+    ecommerce_logger.setLevel(logging.INFO)   # 主动把闸①也开到 INFO
+```
+
+> 记忆：handler 的闸要开，logger 的闸也要开，**两道都开日志才通**。
+
+#### 冒泡（propagate）：挂一个 handler 收全链路
+
+Logger 按名字点分成树（`root → multi_agents → multi_agents.ecommerce → ...agents.review_insight`）。子 logger 喊的日志会**自动冒泡给父 logger 的所有 handler**。所以只在父 logger `multi_agents.ecommerce` 挂一个 FileHandler，子模块（各 agent / graph）的日志就全收进同一个文件——不用每个模块各配一遍。
+
+#### 三步生命周期（每次研究一轮）
+
+| 阶段 | 函数 | 干什么 |
+|------|------|--------|
+| 挂 | `_setup_run_log` | 建 FileHandler（指向本次 `<时间戳>_<关键词>.log`）+ 开两道闸 + 挂到 logger；返回 `(handler, log_path)` |
+| 跑 | graph 全程 | 靠冒泡，graph / 各 agent / LLM 的日志自动落进本次文件 |
+| 摘 | `_teardown_run_log` | `removeHandler`（不再写）+ `flush`（刷盘不丢）+ `close`（关句柄防泄漏） |
+
+`_teardown_run_log` 在 `run_ecommerce_research` 里调 **2 次**：策略校验失败抛错前一次、跑 graph 的 `finally` 一次（不管成败都摘）。返回的 `handler` 仅供结束时摘掉（资源），`log_path` 用于日志末尾提示路径 + 塞进 `output_paths["log"]` 返回给前端（数据）。
+
+#### 为什么每次研究都要「新挂新摘」
+
+`FileHandler` 创建时就绑定**一个具体文件**，而每次研究的 `log_path` 都不同（时间戳保证唯一）。如果挂上不摘：
+
+- logger 上**越积越多 handler**（每次研究一个）；
+- 第 N 次研究喊一条日志，会**同时写进所有还挂着的旧文件** → 日志串了；
+- 每个 handler 占一个文件句柄 → **泄漏**。
+
+所以「新挂（指向本次文件）→ 用 → 摘」是必须的循环。`run_ecommerce_research` 用 `try/finally` 保证不管成功失败都摘 handler。
+
+#### root logger 与兜底（lastResort）
+
+- `logging.getLogger()`（空参）才是 root（树根），`getLogger("multi_agents.ecommerce")` 是它的后代；`getLogger("同名")` 是全局单例，同名永远返回同一对象（所以 `runner.py:42` 的模块级 `logger` 和 `_setup_run_log` 内的 `ecommerce_logger` 是同一个，前者用来喊话、后者用来挂 handler）。
+- 啥都没配时，`WARNING+` 日志会被系统兜底 handler（lastResort）打到 stderr——这就是「没配过却看到控制台有日志」的原因。
+- 本项目主动在 `multi_agents.ecommerce` 挂 FileHandler + 开 INFO 闸，把 INFO+ 落进按次文件。
 
 ---
 
@@ -503,3 +568,278 @@ python -m pytest tests/test_ecommerce_state.py tests/test_ecommerce_tools.py \
 - ✅ 可说：在开源 GPT Researcher 上「二次开发 / 垂直化改造 / 扩展多 Agent 工作流」「设计实现了 `multi_agents/ecommerce/`」
 - ❌ 不可说：「从零自研整个研究系统」（底座是开源的）
 - 底座（`gpt_researcher/` 的搜索/抓取/LLM 抽象）复用自 GPT Researcher；`multi_agents/ecommerce/`、`backend/server/ecommerce_api.py`、`frontend/ecommerce*.html`、`scripts/export_ecommerce_demo_cases.py` 为自研。
+
+---
+
+## 17. 端到端 SOP 与数据流全程示例（portable blender）
+
+> 本章把 7 个节点逐个讲透（读什么 / 做什么 / 写什么 / 记什么审计），再用 `query="portable blender", market="US", depth="standard"` 跑一遍，**展示每一步 state 里数据怎么变化**。是 §6（速览）和 §7（Agent 详解）的「带数据的完整版」。
+
+### 17.0 数据流总览
+
+```
+START → planner → ┬─ trend     ─┐
+                  ├─ competitor ├→ scoring → writer → quality → END
+                  └─ review     ─┘
+                  (fork 并发)     (join barrier)
+```
+
+| 节点 | 读 | 写（产出字段） | audit agent 名 | 同步/异步 |
+|------|----|----|------|------|
+| **planner** | query/market/depth | `research_plan` | ProductResearchPlannerAgent | 同步 |
+| **trend** | `research_plan.trend_queries` | `trend_result` | TrendResearchAgent | 异步·并发 |
+| **competitor** | `research_plan.competitor_queries` | `competitor_result` | CompetitorAnalysisAgent | 异步·并发 |
+| **review** | `research_plan.review_queries` + governance | `review_result` | ReviewInsightAgent | 异步·并发 |
+| **scoring** | trend/competitor/review_result | `opportunity_score` | OpportunityScoringAgent | 异步 |
+| **writer** | opportunity_score + 三方 result | `final_report` | EcommerceReportWriterAgent | 同步 |
+| **quality** | final_report + 三方 evidence | `quality_check` | QualityReviewerAgent | 同步 |
+
+> 每个节点结束都往 `audit_log` 追加一条（`finalize_audit`），`governance` 走闭包共享原地改（不在 return 里）。
+
+---
+
+### 17.1 planner — 分工派活（同步，`agents/planner.py`）
+
+| | 内容 |
+|---|---|
+| 📖 读 | `query` / `target_market` / `depth` |
+| ⚙️ 做 | 按 depth 取 `max_queries`（fast=2/standard=4/deep=6），用 `_QUERY_TEMPLATES` 模板填充生成三类查询；**不触网、不调 LLM** |
+| ✏️ 写 | `research_plan = {trend_queries, competitor_queries, review_queries, risk_focus, scoring_dimensions}` |
+| 📋 audit | `{agent: ProductResearchPlannerAgent, status:success, source_count:0, confidence:1.0}`（没检索没花钱，确定性 100%） |
+
+`risk_focus`（固定 4 项，给 quality 用）+ `scoring_dimensions`（固定 6 项，给 scoring 用）**不拿去检索**，只是契约清单。
+
+---
+
+### 17.2 trend — 趋势研究（异步并发，`agents/trend_researcher.py`）
+
+| | 内容 |
+|---|---|
+| 📖 读 | `research_plan.trend_queries`（逐条检索，每条取 3 条结果）、query/market |
+| ⚙️ 做 | `search_sources` 检索→标准化→url 去重→截断到 `max_sources_per_agent`；把 snippet/content 拼给 LLM 写中文趋势 summary，LLM 不可用回退模板 |
+| ✏️ 写 | `trend_result = {summary, summary_source, trend_score, key_findings, evidence, confidence, scored_by?, negative_signals?, scoring_rationale?}` |
+| 📋 audit | `{TrendResearchAgent, status, source_count, confidence, warning}` |
+
+**评分逻辑**：`trend_score = 7.0 if source_count>=3 else 5.5`；`confidence = min(0.9, 0.35 + source_count*0.1)`；`source_count<2` → status=partial。失败兜底：trend_score=4.0, confidence=0.2。
+
+**内容感知评分**：LLM 可用且返回 JSON 合法时，`trend_score` 来自 source content 的趋势强度、需求变化和负面信号分析，并返回 `scored_by="llm"`、`negative_signals`、`scoring_rationale`；LLM 不可用或 JSON 无效时，沿用 source-count 规则兜底，并标记 `scored_by="rule"`。
+
+---
+
+### 17.3 competitor — 竞品分析（异步并发，`agents/competitor_analyzer.py`）
+
+| | 内容 |
+|---|---|
+| 📖 读 | `research_plan.competitor_queries`、query/market |
+| ⚙️ 做 | 检索同 trend；正则 `\$(\d+)` 抽价格区间；LLM 写中文竞品 summary（回退模板）；从 source title 抽真实竞品名（去重，最多 3 个） |
+| ✏️ 写 | `competitor_result = {summary, summary_source, competitors, price_range, competition_score, differentiation_opportunities, evidence, confidence, scored_by?, entry_barriers?, scoring_rationale?}` |
+| 📋 audit | `{CompetitorAnalysisAgent, ...}` |
+
+**评分逻辑**：`competition_score = 6.0 if source_count>=3 else 5.0`；`price_range` 默认 `$20-$60`（抽不到时）；`confidence = min(0.9, 0.35 + source_count*0.1)`。
+
+**内容感知评分**：`competition_score` 表示竞争切入容易度。LLM 可用且返回 JSON 合法时，分数来自竞品强度、价格拥挤度、进入壁垒和差异化空间，并返回 `scored_by="llm"`、`entry_barriers`、`scoring_rationale`；LLM 不可用或 JSON 无效时，沿用 source-count 规则兜底，并标记 `scored_by="rule"`。
+
+---
+
+### 17.4 review — 评论洞察（异步并发，`agents/review_insight.py`）
+
+| | 内容 |
+|---|---|
+| 📖 读 | `research_plan.review_queries`、query/market、governance（计外部 API） |
+| ⚙️ 做 | 双数据源：有 Apify token → 抓 Amazon/Reddit 真实评论；失败/空/不相关 → 降级 Tavily fallback；LLM 把评论归纳中文痛点（回退原文） |
+| ✏️ 写 | `review_result = {summary, pain_points, review_source, search_keyword, review_count, platforms, fallback_reason, pain_point_score, evidence, confidence, pain_points_language, scored_by?, structural_risks?, scoring_rationale?, ...}` |
+| 📋 audit | `{ReviewInsightAgent, ..., review_source, search_keyword, review_count, platforms, fallback_reason}`（多 5 个扩展字段） |
+
+**评分逻辑**：`pain_point_score = 8.0 if len(pain_points)>=3 else 5.5`；`confidence = min(0.9, 0.3 + len(pain_points)*0.08)`。
+
+**内容感知评分**：`pain_point_score` 表示可行动的未满足需求机会。LLM 可用且返回 JSON 合法时，分数来自痛点频次、具体度、可解决性和结构性风险，并返回 `scored_by="llm"`、`structural_risks`、`scoring_rationale`；LLM 不可用或 JSON 无效时，沿用 pain-point-count 规则兜底，并标记 `scored_by="rule"`。
+
+---
+
+### 17.5 scoring — 机会评分（异步，`agents/opportunity_scorer.py`）
+
+| | 内容 |
+|---|---|
+| 📖 读 | `trend_result` / `competitor_result` / `review_result`（取各 `*_score`） |
+| ⚙️ 做 | 先取规则基线分；预算够则 LLM 打五维分（覆盖基线）+ 给理由，LLM 不可用/解析失败→保留规则；`evidence_score` 永远规则算；`overall_score` 按固定加权公式重算 |
+| ✏️ 写 | `opportunity_score = {trend/competition/pain_point/margin/risk/evidence_score, overall_score, recommendation, reasons, scored_by}` |
+| 📋 audit | `{OpportunityScoringAgent, status:success, source_count:evidence_count, confidence, warning}` |
+
+**关键公式**：
+- 规则基线：`trend=trend_result.trend_score`、`competition=competitor_result.competition_score`、`pain_point=review_result.pain_point_score`、`margin=6.0`、`risk=5.0`
+- `evidence_score = min(10, 3 + evidence_count)`（evidence_count = 三方 evidence 数之和）
+- **加权**（`schemas/scoring.py`）：trend×0.22 + competition×0.18 + pain_point×0.22 + margin×0.14 + risk×0.10 + evidence×0.14
+- `recommendation`：≥7.5「建议进入但需小规模测试」/ ≥6.0「建议谨慎测试进入」/ <6.0「暂不建议」
+- `confidence`：LLM 用了 = `min(0.9, 0.3+evidence*0.08)`；降级到规则 = 再 ×0.8（让评估页看出降级）
+- 预算耗尽 → 强制 `llm_fn=None`（降级），记 governance 降级事件
+
+---
+
+### 17.6 writer — 报告生成（同步，`agents/report_writer.py`）
+
+| | 内容 |
+|---|---|
+| 📖 读 | `opportunity_score` / `review_result` / `competitor_result` / `trend_result` / query / market |
+| ⚙️ 做 | 按 `REPORT_SECTIONS` 固定 10 节顺序拼 Markdown；引用来自三方 evidence 的 url，去重后编号列出；第 7 节固定列通用方法论风险 |
+| ✏️ 写 | `final_report`（Markdown 字符串） |
+| 📋 audit | `{EcommerceReportWriterAgent, status:success, source_count:len(citations), confidence:0.8}` |
+
+---
+
+### 17.7 quality — 质量检查（同步，`agents/quality_reviewer.py`）
+
+| | 内容 |
+|---|---|
+| 📖 读 | `final_report` + 三方 `evidence` + `review_result.pain_points` |
+| ⚙️ 做 | 数报告里的 `http(s)://` 引用数；数三方 evidence 总数；基于真实痛点判 `risk_disclosure`；扫「稳赚/必爆/没有风险」等过度自信词 |
+| ✏️ 写 | `quality_check = {passed, citation_coverage, evidence_sufficiency, logic_consistency, risk_disclosure, issues}` |
+| 📋 audit | `{QualityReviewerAgent, status:success/partial, source_count:evidence_count, confidence:0.8, warning}` |
+
+**基准**：`citation_coverage = min(1, 引用数/3)`；`evidence_sufficiency = min(1, evidence总数/6)`；`risk_disclosure = len(pain_points)>0`；任一不达标或有过自信词 → `issues` 非空 → `passed=False`。
+
+---
+
+### 17.8 贯穿示例：`portable blender / US / standard` 全程 state 变化
+
+> 假设检索正常（trend/competitor 各搜到 4 条 source、review 得到 3 条痛点、价格抽到 $25-$45、最终引用 5 条）。下面每步只列**该步变化的字段**。
+
+#### ▸ 初始 state（`create_initial_state`）
+```python
+{
+  "query": "portable blender", "target_market": "US", "depth": "standard",
+  "research_plan": {}, "trend_result": {}, "competitor_result": {}, "review_result": {},
+  "opportunity_score": {}, "final_report": "", "quality_check": {},
+  "audit_log": [], "errors": [],
+  "governance": {"events": [], "usage": {"llm_call_count":0,"search_call_count":0,
+                  "external_api_call_count":0,"estimated_cost_usd":0.0},
+                 "budget_exceeded": False, "degraded_by_budget": False},
+}
+```
+
+#### ▸ Step 1 planner（max_queries=4）
+```python
+"research_plan": {
+  "trend_queries":      ["portable blender market trend US", "portable blender demand seasonality US",
+                         "portable blender google trends US", "portable blender consumer trend report"],
+  "competitor_queries": ["portable blender amazon best sellers", "portable blender top products amazon",
+                         "best portable blender reviews", "portable blender price comparison"],
+  "review_queries":     ["portable blender customer complaints US", "portable blender amazon reviews US",
+                         "portable blender negative reviews US", "portable blender reddit review US"],
+  "risk_focus":         ["platform policy risk","shipping and after-sales risk",
+                         "product quality complaints","data source limitation"],
+  "scoring_dimensions": ["trend_score","competition_score","pain_point_score",
+                         "margin_score","risk_score","evidence_score"],
+}
+"audit_log": [+1]  # ProductResearchPlannerAgent, source_count=0, confidence=1.0
+```
+
+#### ▸ Step 2~4 三路并发（trend / competitor / review）
+```python
+"trend_result": {            # 搜到 4 source
+  "summary": "<LLM 中文趋势总结>", "summary_source": "llm",
+  "trend_score": 7.0,        # 4>=3 → 7.0
+  "evidence": [<4 条>], "confidence": 0.75,   # min(0.9, 0.35+4*0.1)
+}
+"competitor_result": {       # 搜到 4 source
+  "summary": "<LLM 中文竞品总结>", "summary_source": "llm",
+  "competitors": [{name:"...",positioning:"..."}, ...3 个],
+  "price_range": "$25-$45",  # 正则抽出
+  "competition_score": 6.0,  # 4>=3 → 6.0
+  "evidence": [<4 条>], "confidence": 0.75,
+}
+"review_result": {           # 抓到 3 条痛点（Apify 降级 Tavily）
+  "pain_points": ["电池续航差","清洗麻烦","漏水"],
+  "review_source": "web_fallback", "fallback_reason": "apify returned 0 reviews",
+  "pain_point_score": 8.0,   # 3>=3 → 8.0
+  "evidence": [<3 条>], "confidence": 0.54,   # min(0.9, 0.3+3*0.08)
+}
+"audit_log": [+3]            # Trend / Competitor / Review 三条
+"governance.usage": {search:12, external_api:1, llm:2}  # 三路检索+评论+summary
+```
+
+#### ▸ Step 5 scoring（假设 LLM 不可用 → 规则评分，scored_by=rule）
+```python
+# 基线：trend=7.0, competition=6.0, pain_point=8.0, margin=6.0, risk=5.0
+# evidence_count = 4+4+3 = 11 → evidence_score = min(10, 3+11) = 10.0
+# overall = 7.0×0.22 + 6.0×0.18 + 8.0×0.22 + 6.0×0.14 + 5.0×0.10 + 10.0×0.14
+#         = 1.54 + 1.08 + 1.76 + 0.84 + 0.50 + 1.40 = 7.12
+"opportunity_score": {
+  "trend_score":7.0, "competition_score":6.0, "pain_point_score":8.0,
+  "margin_score":6.0, "risk_score":5.0, "evidence_score":10.0,
+  "overall_score": 7.12,
+  "recommendation": "建议谨慎测试进入",   # 7.12 ∈ [6.0, 7.5)
+  "reasons": [<规则 3 条理由>], "scored_by": "rule",
+}
+"audit_log": [+1]  # OpportunityScoringAgent, source_count=11, confidence=0.72 (0.9×0.8 降级打折)
+#                 warning="llm scoring unavailable, fallback to rule"
+```
+
+#### ▸ Step 6 writer（拼 10 节 Markdown）
+```python
+"final_report": "# 跨境电商选品调研报告\n## 1. 选品结论\n建议谨慎测试进入。...\n## 2. 市场趋势分析\n...
+                 \n## 7. 风险因素\n...\n## 10. 数据来源与引用\n1. [...]...\n2. [...]..."  # 含 5 条引用
+"audit_log": [+1]  # EcommerceReportWriterAgent, source_count=5 (citations), confidence=0.8
+```
+
+#### ▸ Step 7 quality
+```python
+# citation_count=5 → citation_coverage = min(1, 5/3) = 1.0
+# evidence 总数 11 → evidence_sufficiency = min(1, 11/6) = 1.0
+# pain_points=3 → risk_disclosure = True
+# 无过度自信词 → overconfident=[]
+"quality_check": {
+  "passed": True, "citation_coverage":1.0, "evidence_sufficiency":1.0,
+  "logic_consistency":0.8, "risk_disclosure":True, "issues":[],
+}
+"audit_log": [+1]  # QualityReviewerAgent, status=success, source_count=11, confidence=0.8
+# audit_log 现共 7 条（7 个 agent 各一）
+```
+
+---
+
+### 17.9 最终产物（runner 落盘）
+
+graph 跑完，`run_ecommerce_graph` 把闭包改过的 governance 赋回 `final["governance"]`，然后 runner 写 4 个文件 + 回填路径：
+
+| 文件 | 内容 | 来源字段 |
+|------|------|---------|
+| `portable-blender-report.md` | 选品报告（Markdown） | `final_report` |
+| `portable-blender-audit.json` | 7 条审计记录 | `audit_log` |
+| `portable-blender-quality.json` | 质检结果 | `quality_check` |
+| `portable-blender-evaluation.json` | 评估汇总（总分/置信度/证据数/降级数/耗时/评分方式/质检） | `build_evaluation_summary(final_state)` |
+
+```python
+final_state["output_paths"] = {
+  "report":"outputs/ecommerce/portable-blender-report.md",
+  "audit":"...portable-blender-audit.json",
+  "quality":"...portable-blender-quality.json",
+  "evaluation":"...portable-blender-evaluation.json",
+  "log":"logs/ecommerce/<时间戳>_portable-blender.log",
+}
+final_state["evaluation_summary"] = {  # evaluation.json 的内容
+  "overall_score":7.12, "scored_by":"rule", "passed":True,
+  "avg_confidence": <7 条 audit confidence 的均值>, "evidence_count":11,
+  "degradation_count": <governance 里 fallback/retry 事件数>, "total_duration_ms": <7 条 duration 之和>,
+  ...governance 汇总字段,
+}
+```
+
+### 17.10 全程数据变化一图流（portable blender）
+
+```
+state 字段         planner   trend/comp/review(并发)   scoring    writer    quality   落盘
+─────────────────  ────────  ──────────────────────    ────────   ────────  ────────  ────
+research_plan      ✅写入
+trend_result                  ✅写入
+competitor_result             ✅写入
+review_result                 ✅写入
+opportunity_score                                       ✅写入
+final_report                                                      ✅写入
+quality_check                                                               ✅写入
+audit_log          +1         +3                        +1         +1        +1        → audit.json(7条)
+governance         (闭包改)   (闭包改:usage+events)     (闭包改)                                  → 喂 evaluation
+                                                                     ─────────────────────────
+                                                       4 个文件 ← report/audit/quality/evaluation
+```
+
+> 核心记忆：**每个节点只写自己负责的字段**（planner→plan、trend→trend_result…），`audit_log` 靠 `operator.add` reducer 自动累加成 7 条，`governance` 全程闭包原地改（不进 return），最后 runner 把所有结果落盘 + 聚合成 evaluation。
