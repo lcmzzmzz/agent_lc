@@ -80,6 +80,10 @@ def load_run(
             paths.get("evaluation"),
             metadata.get("evaluation_summary", {}),
         ),
+        "visual_result": _read_json_path(
+            paths.get("visual_assets"),
+            metadata.get("visual_result", {}),
+        ),
         "report": _read_text(paths.get("report")),
     }
 

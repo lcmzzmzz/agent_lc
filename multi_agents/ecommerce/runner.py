@@ -25,6 +25,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+from multi_agents.ecommerce.agents.visual_concept import (
+    DEFAULT_VISUAL_MODEL,
+    run_visual_concept_agent,
+)
 from multi_agents.ecommerce.config import get_budget_config
 from multi_agents.ecommerce.evaluation import build_evaluation_summary
 from multi_agents.ecommerce.graph import ProgressFn, run_ecommerce_graph
@@ -35,6 +39,7 @@ from multi_agents.ecommerce.runtime.policy_guard import (
     validate_research_request,
 )
 from multi_agents.ecommerce.state import EcommerceResearchState, create_initial_state
+from multi_agents.ecommerce.tools.image_generation.base import ImageGenerationProvider
 from multi_agents.ecommerce.tools.mcp_adapter import McpSearchFn, make_mcp_augmented_search_fn
 from multi_agents.ecommerce.tools.product_search import SearchFn
 
@@ -134,6 +139,13 @@ async def run_ecommerce_research(
     mcp_strategy: str = "fast",         # MCP 策略：fast / standard / deep
     mcp_configs: list[dict[str, Any]] | None = None,  # MCP server 配置（None = 不附加额外配置）
     mcp_search_fn: McpSearchFn | None = None,  # MCP 检索函数（None → 空实现兜底，不追加任何 MCP 结果）
+    # 视觉概念 Agent（Task 4）：visual_enabled=False 时默认跳过，run 行为与改造前完全一致；
+    # =True 时在 graph 跑完后、evaluation_summary 聚合前注入 VisualConceptAgent，生成选品图概念图
+    # 并把产物落盘到 <slug>-visual/visual-assets.json，同时把 visual_result 塞回 state 让评估摘要统计到图片数。
+    visual_enabled: bool = False,          # 是否启用视觉概念阶段（默认关，向后兼容）
+    visual_model: str = DEFAULT_VISUAL_MODEL,  # 视觉模型（默认 doubao-seedream）
+    visual_image_count: int = 6,           # 生成图片张数（1~6，超出区间会被 clamp）
+    image_provider: ImageGenerationProvider | None = None,  # 图片生成 provider（None → 用内置火山方舟即梦；测试传 FakeImageProvider）
 ) -> EcommerceResearchState:            # 返回完整 state（含 output_paths / evaluation_summary）
     """端到端跑一次跨境电商选品调研，并写出报告/审计/质检/log 文件。"""
     # ── ① 开日志：挂本次研究的 FileHandler + 开两道闸门（返回 handler 供结束时摘）──
@@ -221,9 +233,41 @@ async def run_ecommerce_research(
     _write_json(audit_path, final_state["audit_log"])          # 写审计 .json
     _write_json(quality_path, final_state["quality_check"])    # 写质检 .json
 
+    # 【正经注释】[FIX-1] 视觉概念阶段：复用上面已声明的 output_path / slug（不重复声明、不删除既有声明，
+    # 否则下面 <slug>-* 路径变量会 ReferenceError）。必须放在「质检落盘」之后、「build_evaluation_summary」之前 ——
+    # 因为 evaluation_summary 内部的 _summarize_visual_result 会读取 visual_result 统计 visual_asset_count，
+    # 顺序错了摘要就会把图片数算成 0。visual_enabled=False 时只往 state 里塞一个 skipped 兜底，
+    # 不写任何文件、不加 output_paths 键 —— 向后完全兼容（老调用零感知）。
+    # 【大白话注释】"生成选品概念图"这一步夹在"质检写完"和"算总评估"之间：
+    # 必须在算总分之前先把图生成完，总分才知道生成了几张图；没开视觉就只记一笔"跳过"，啥也不写。
+    visual_dir = output_path / f"{slug}-visual"
+    if visual_enabled:
+        final_state = await run_visual_concept_agent(
+            final_state,
+            image_provider=image_provider,
+            visual_enabled=True,
+            visual_model=visual_model,
+            image_count=max(1, min(6, int(visual_image_count))),
+            output_dir=visual_dir,
+            progress_callback=progress_callback,
+        )
+    else:
+        final_state.setdefault(
+            "visual_result",
+            {
+                "enabled": False,
+                "status": "skipped",
+                "visual_brief": {},
+                "prompts": [],
+                "assets": [],
+                "warnings": [],
+                "usage": {},
+            },
+        )
+
     # 【正经注释】evaluation_summary 必须先算：evaluation.json 的内容就是它，run.json 还要把它嵌进去。
     # 【大白话注释】先把"评估总表"算出来——后面两个文件都指望它。
-    evaluation_summary = build_evaluation_summary(final_state)  # 聚合评估指标（总分/置信度/证据数/降级数/耗时/trace/HITL/MCP）
+    evaluation_summary = build_evaluation_summary(final_state)  # 聚合评估指标（总分/置信度/证据数/降级数/耗时/trace/HITL/MCP/视觉）
     final_state["evaluation_summary"] = evaluation_summary      # 顺手塞回 state，调用方可直接读
 
     _write_json(evaluation_path, evaluation_summary)            # 写评估 .json
@@ -244,6 +288,17 @@ async def run_ecommerce_research(
         "run": str(run_path),
         "log": str(log_path),                    # 带上 log 文件路径（块①那个，方便回看全链路日志）
     }
+    # 【正经注释】[FIX-1] 视觉产物落盘：只在 visual_enabled=True 时写 visual-assets.json + 暴露两个路径键。
+    # 放在 output_paths 字典已经组装完之后追加（原地 mutate），既保证老调用（visual_enabled=False）零感知、
+    # 又让 enabled 分支能把 visual_assets/visual_dir 一并塞进 run.json 的 output_paths。
+    # 【大白话注释】只有开了视觉才把图片清单写到 <slug>-visual/ 目录，并给 output_paths 加两个键；
+    # 没开就什么也不加 —— 老的"不看图"调用拿到的东西和以前一模一样。
+    if visual_enabled:
+        visual_assets_path = visual_dir / "visual-assets.json"
+        visual_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(visual_assets_path, final_state.get("visual_result", {}))
+        final_state["output_paths"]["visual_assets"] = str(visual_assets_path)
+        final_state["output_paths"]["visual_dir"] = str(visual_dir)
     run_metadata = {                             # 组装 run.json：把 run_id/output_paths/评估摘要打成一个可索引的整体
         "run_id": final_state.get("run_id", ""),
         "query": final_state.get("query", ""),
@@ -251,6 +306,7 @@ async def run_ecommerce_research(
         "created_at_ms": int(datetime.datetime.now().timestamp() * 1000),  # 毫秒级时间戳（与 trace_recorder 口径一致）
         "output_paths": final_state["output_paths"],
         "evaluation_summary": evaluation_summary,
+        "visual_result": final_state.get("visual_result", {}),
     }
     _write_json(run_path, run_metadata)          # 写 run.json
     return final_state                           # 返回完整 state（含 output_paths + evaluation_summary）

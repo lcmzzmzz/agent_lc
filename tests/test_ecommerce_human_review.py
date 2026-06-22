@@ -65,6 +65,34 @@ def test_save_human_review_updates_review_file(tmp_path):
     assert loaded["human_review"]["score_overrides"]["trend_score"]["value"] == 6.5
 
 
+def test_load_run_reads_visual_result(tmp_path):
+    from multi_agents.ecommerce.runtime.run_store import load_run
+
+    run_id = "ecom_20260623090000_portable-blender_abc123"
+    visual_path = tmp_path / "portable-blender-visual" / "visual-assets.json"
+    visual_path.parent.mkdir()
+    visual_path.write_text(
+        json.dumps({"status": "success", "assets": [{"asset_id": "visual_product_01"}]}),
+        encoding="utf-8",
+    )
+    run_path = tmp_path / "portable-blender-run.json"
+    run_path.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "output_paths": {"visual_assets": str(visual_path)},
+                "evaluation_summary": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_run(run_id, output_dir=tmp_path)
+
+    assert loaded["visual_result"]["status"] == "success"
+    assert loaded["visual_result"]["assets"][0]["asset_id"] == "visual_product_01"
+
+
 def test_save_human_review_raises_when_review_path_missing(tmp_path):
     """[FIX-5] Missing human_review path must become a FileNotFoundError,
     so the API layer can consistently return 404 instead of leaking a 500.
