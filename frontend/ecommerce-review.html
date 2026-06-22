@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EcomResearcher Human Review</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --border:#334155; --txt:#e2e8f0; --mut:#94a3b8; --acc:#38bdf8; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; line-height:1.6; }
+  header { padding:20px 28px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  main { max-width:1180px; margin:0 auto; padding:24px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:18px; margin-bottom:18px; }
+  .row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:180px; }
+  label { display:block; font-size:13px; color:var(--mut); margin:8px 0 4px; }
+  input, select, textarea { width:100%; padding:10px 12px; background:#0b1220; border:1px solid var(--border); border-radius:8px; color:var(--txt); font-size:14px; }
+  textarea { min-height:90px; }
+  button { background:var(--acc); color:#06283d; border:none; border-radius:8px; padding:10px 16px; font-weight:600; cursor:pointer; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { padding:7px 8px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+  th { color:var(--mut); font-weight:500; }
+  .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; background:#0b1220; border:1px solid var(--border); }
+  .hidden { display:none; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>EcomResearcher Review</h1>
+  <span class="pill" id="status">idle</span>
+</header>
+<main>
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Backend Host</label>
+        <input id="host" value="localhost:8000" />
+      </div>
+      <div>
+        <label>Run ID</label>
+        <input id="runId" aria-label="Run ID" />
+      </div>
+      <div style="flex:0 0 auto;">
+        <button id="loadBtn">Load</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="reviewCard">
+    <h2>Plan Review</h2>
+    <textarea id="planComment" aria-label="Plan review comment"></textarea>
+
+    <h2>Evidence Labels</h2>
+    <table>
+      <thead><tr><th>URL</th><th>Label</th><th>Reason</th></tr></thead>
+      <tbody id="evidenceBody"></tbody>
+    </table>
+
+    <h2>Score Overrides</h2>
+    <div class="row">
+      <div><label>Trend</label><input id="trendOverride" type="number" min="0" max="10" step="0.1" /></div>
+      <div><label>Competition</label><input id="competitionOverride" type="number" min="0" max="10" step="0.1" /></div>
+      <div><label>Pain Point</label><input id="painOverride" type="number" min="0" max="10" step="0.1" /></div>
+    </div>
+    <label>Override Reason</label>
+    <textarea id="overrideReason"></textarea>
+
+    <h2>Report Labels</h2>
+    <div class="row">
+      <label><input type="checkbox" class="reportLabel" value="citation_weak" /> citation_weak</label>
+      <label><input type="checkbox" class="reportLabel" value="risk_missing" /> risk_missing</label>
+      <label><input type="checkbox" class="reportLabel" value="overconfident" /> overconfident</label>
+      <label><input type="checkbox" class="reportLabel" value="evidence_mismatch" /> evidence_mismatch</label>
+    </div>
+    <button id="saveBtn">Save Review</button>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let currentRun = null;
+
+function apiBase(){
+  return `http://${$("host").value.trim()}`;
+}
+
+function setStatus(text, cls=""){
+  const e = $("status");
+  e.textContent = text;
+  e.className = "pill " + cls;
+}
+
+function allSources(run){
+  const buckets = ["trend_result", "competitor_result", "review_result"];
+  return buckets.flatMap(key => (run[key] && run[key].evidence) || []);
+}
+
+function renderEvidence(run){
+  $("evidenceBody").innerHTML = allSources(run).map((src) => `
+    <tr data-url="${src.url || src.href || ""}">
+      <td>${src.url || src.href || src.title || "-"}</td>
+      <td>
+        <select class="sourceLabel">
+          <option value="relevant">relevant</option>
+          <option value="weak">weak</option>
+          <option value="irrelevant">irrelevant</option>
+          <option value="duplicate">duplicate</option>
+        </select>
+      </td>
+      <td><input class="sourceReason" aria-label="Evidence label reason" /></td>
+    </tr>
+  `).join("");
+}
+
+function collectReview(){
+  const labels = Array.from(document.querySelectorAll("#evidenceBody tr")).map(row => ({
+    url: row.dataset.url,
+    label: row.querySelector(".sourceLabel").value,
+    reason: row.querySelector(".sourceReason").value.trim(),
+  }));
+  const score_overrides = {};
+  const reason = $("overrideReason").value.trim();
+  [["trend_score", "trendOverride"], ["competition_score", "competitionOverride"], ["pain_point_score", "painOverride"]].forEach(([key, id]) => {
+    const raw = $(id).value;
+    if(raw !== ""){
+      score_overrides[key] = { value: Number(raw), reason };
+    }
+  });
+  return {
+    review_status: "revised",
+    reviewer: "local_user",
+    plan_review: { status: "reviewed", comment: $("planComment").value.trim() },
+    evidence_labels: labels,
+    score_overrides,
+    report_labels: Array.from(document.querySelectorAll(".reportLabel:checked")).map(x => x.value),
+  };
+}
+
+$("loadBtn").onclick = async () => {
+  setStatus("loading", "warn");
+  const res = await fetch(`${apiBase()}/api/ecommerce/runs/${$("runId").value.trim()}`);
+  if(!res.ok){ setStatus(`load failed ${res.status}`, "bad"); return; }
+  currentRun = await res.json();
+  renderEvidence(currentRun);
+  $("reviewCard").classList.remove("hidden");
+  setStatus("loaded", "ok");
+};
+
+$("saveBtn").onclick = async () => {
+  setStatus("saving", "warn");
+  const res = await fetch(`${apiBase()}/api/ecommerce/runs/${$("runId").value.trim()}/human-review`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(collectReview()),
+  });
+  setStatus(res.ok ? "saved" : `save failed ${res.status}`, res.ok ? "ok" : "bad");
+};
+</script>
+</body>
+</html>

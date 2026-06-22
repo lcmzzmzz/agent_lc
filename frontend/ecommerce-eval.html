@@ -102,6 +102,9 @@
             <th class="num">Policy Blocks</th>
             <th class="num">LLM/Search</th>
             <th class="num">Duration</th>
+            <th class="num">Eval</th>
+            <th class="num">Human</th>
+            <th class="num">MCP</th>
             <th>Quality</th>
             <th>报告</th>
           </tr>
@@ -195,7 +198,7 @@ function render(cases){
   // 明细表
   $("evalBody").innerHTML = rows.map(r => {
     if(r.status === "error"){
-      // 错误行：每个数值列都用 - 占位，保证列数 == 表头列数（11 列）
+      // 错误行：每个数值列都用 - 占位，保证列数 == 表头列数（14 列）
       return `
       <tr>
         <td>
@@ -204,6 +207,9 @@ function render(cases){
           <div class="bad" style="font-size:12px; margin-top:4px;">${esc(r.error || "export failed")}</div>
         </td>
         <td class="num bad">ERR</td>
+        <td class="num">-</td>
+        <td class="num">-</td>
+        <td class="num">-</td>
         <td class="num">-</td>
         <td class="num">-</td>
         <td class="num">-</td>
@@ -235,6 +241,9 @@ function render(cases){
         <td class="num ${s.policy_block_count>0?'bad':''}">${s.policy_block_count==null?"-":s.policy_block_count}</td>
         <td class="num">${(s.llm_call_count==null&&s.search_call_count==null)?"-":`${s.llm_call_count||0}/${s.search_call_count||0}`}</td>
         <td class="num">${fmtMs(s.duration_ms)}</td>
+        <td class="num">${s.eval_passed == null ? "-" : (s.eval_passed ? "PASS" : "FAIL")} ${s.eval_score == null ? "" : Number(s.eval_score).toFixed(2)}</td>
+        <td class="num">${s.human_overridden_score_count == null ? "-" : s.human_overridden_score_count}</td>
+        <td class="num">${s.mcp_tool_call_count == null ? "-" : s.mcp_tool_call_count}</td>
         <td>${badge}</td>
         <td>${r.report ? `<a href="${esc(r.report)}" target="_blank" rel="noopener" style="color:var(--acc);">查看 ↗</a>` : "-"}</td>
       </tr>`;

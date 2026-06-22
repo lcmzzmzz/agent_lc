@@ -35,6 +35,8 @@
   #timeline li.active { color:var(--txt); }
   #timeline li.active::before { background:var(--acc); }
   #timeline li.done::before { background:var(--ok); }
+  /* AgentOps trace 警告列 */
+  .trace-warn { color: var(--warn); max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* 评分 */
   .score-big { font-size:42px; font-weight:700; color:var(--acc); }
   .score-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px; }
@@ -98,6 +100,28 @@
     <ul id="timeline"></ul>
   </div>
 
+  <!-- AgentOps trace -->
+  <div class="card hidden" id="traceCard">
+    <strong>AgentOps Trace</strong>
+    <span class="pill" id="runIdPill">run_id: -</span>
+    <div style="overflow-x:auto; margin-top:10px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Node</th>
+            <th>Status</th>
+            <th>Duration</th>
+            <th>Sources</th>
+            <th>Score</th>
+            <th>By</th>
+            <th>Warnings</th>
+          </tr>
+        </thead>
+        <tbody id="traceBody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="grid2 hidden" id="resultGrid">
     <!-- 评分 -->
     <div class="card">
@@ -148,6 +172,10 @@ function resetUI(){
   $("resultGrid").classList.add("hidden");
   $("reportCard").classList.add("hidden");
   $("timeline").innerHTML="";
+  $("traceCard").classList.add("hidden");
+  $("traceBody").innerHTML = "";
+  $("runIdPill").textContent = "run_id: -";
+  seenTraceRows.clear();
 }
 
 function renderTimeline(currentEvent){
@@ -213,6 +241,38 @@ function renderReport(md){
 
 function showError(msg){ const e=document.createElement("div"); e.className="card err"; e.textContent=msg; document.querySelector("main").appendChild(e); }
 
+// AgentOps trace 渲染：按 run_id|node|started_at_ms 去重，保留重试/循环的多次执行
+const seenTraceRows = new Set();
+
+function firstScore(scores){
+  if(!scores) return "-";
+  const keys = Object.keys(scores);
+  if(keys.length === 0) return "-";
+  const v = scores[keys[0]];
+  return v == null ? "-" : Number(v).toFixed(1);
+}
+
+function renderTraceRow(row){
+  $("traceCard").classList.remove("hidden");
+  if(row.run_id) $("runIdPill").textContent = "run_id: " + row.run_id;
+  const traceKey = [row.run_id || "", row.node || "", row.started_at_ms || ""].join("|");
+  if(traceKey && seenTraceRows.has(traceKey)) return;
+  if(traceKey) seenTraceRows.add(traceKey);
+  const out = row.output_summary || {};
+  const warnings = (row.warnings || []).join("; ");
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td>${row.node || "-"}</td>
+    <td class="${row.status === "success" ? "ok" : "warn"}">${row.status || "-"}</td>
+    <td>${row.duration_ms == null ? "-" : row.duration_ms}</td>
+    <td>${out.source_count == null ? "-" : out.source_count}</td>
+    <td>${firstScore(out.scores)}</td>
+    <td>${out.scored_by || "-"}</td>
+    <td class="trace-warn" title="${warnings}">${warnings || "-"}</td>
+  `;
+  $("traceBody").appendChild(tr);
+}
+
 $("runBtn").addEventListener("click", () => {
   const query = $("query").value.trim();
   if(!query){ alert("请输入品类关键词"); return; }
@@ -238,6 +298,10 @@ $("runBtn").addEventListener("click", () => {
     const event = data.event;
     if(event === "done"){
       addStage("done");
+      if(data.run_id) $("runIdPill").textContent = "run_id: " + data.run_id;
+      (data.agent_trace || []).forEach(row => {
+        renderTraceRow(row);
+      });
       $("resultGrid").classList.remove("hidden");
       renderScore(data.opportunity_score || {});
       renderQuality(data.quality_check || {});
@@ -250,6 +314,8 @@ $("runBtn").addEventListener("click", () => {
       setConn("错误","bad");
       showError("服务端错误："+data.error);
       $("runBtn").disabled = false;
+    } else if(event === "trace_node_done"){
+      renderTraceRow(data);
     } else {
       addStage(event, data);
       setConn("执行中… "+(STAGE_LABEL[event]||event),"warn");
