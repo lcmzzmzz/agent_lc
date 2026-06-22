@@ -112,23 +112,29 @@ def _write_case_files(case_dir: Path, slug: str, final_state: dict[str, Any]) ->
 
     # 【正经注释】AgentOps 三件套（trace / human_review / run）也写成标准命名文件。
     # runner 默认会在 output_dir（=本 case 目录）写出 <slug>-trace.json /
-    # <slug>-human-review.json / <slug>-run.json。这里从 final_state 现取数据写出
-    # 无 slug 前缀的标准副本，让 case 目录布局与 manifest 里的 artifact 链接对齐。
-    # 这三项是可选的（trace / human_review 可能缺失），写之前用 Path.exists() 兜底
-    # 跳过 runner 没产出的文件。
-    _ARTIFACT_STATE_KEY = {  # (state 字段, 标准文件名) —— 复用已有的 json 落盘口径
-        "agent_trace": "trace.json",
-        "human_review": "human-review.json",
-    }
-    for state_key, file_name in _ARTIFACT_STATE_KEY.items():
-        payload = final_state.get(state_key)
-        if payload is None:
-            # 缺失则跳过：不强制写空文件，保持 manifest 链接与实际文件一致
+    # <slug>-human-review.json / <slug>-run.json。这里对 trace / human-review 直接
+    # 复制 runner 写好的 slug 前缀副本到标准命名（与 run.json 同口径，保证字节一致），
+    # 不从 final_state 重新序列化——runner 落盘时已对缺失 state 字段做了兜底填充，
+    # 磁盘上的那份才是 manifest artifact 链接指向的 canonical 副本。
+    # 这两项是可选的：用 Path.exists() 判断 runner 是否产出过 slug 前缀文件，
+    # 没产出就跳过，保持 manifest 链接与实际文件一致。
+    for file_name in ("trace.json", "human-review.json"):
+        canonical = case_dir / file_name
+        if canonical.exists():
+            # 标准 canonical 副本已存在则跳过（与 run.json 同口径）
             continue
-        (case_dir / file_name).write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        slug_prefixed = case_dir / f"{slug}-{file_name}"
+        if slug_prefixed.exists():
+            # 复用 runner 写好的 slug 前缀副本（字节级一致）
+            try:
+                canonical.write_text(
+                    slug_prefixed.read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
+            except OSError:
+                # 读/写失败不阻断主流程：manifest 链接仍指向标准名，
+                # 缺失文件由消费方自行容忍
+                pass
 
     # run.json：由 runner 的 run_metadata 构造（run_id / output_paths / 评估摘要）。
     # final_state 里没有完整的 run_metadata（runner 在落盘时才组装），所以优先复用
