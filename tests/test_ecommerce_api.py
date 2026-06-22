@@ -153,6 +153,96 @@ def test_eval_run_lookup_reads_summary(tmp_path):
     assert response.json()["eval_run_id"] == eval_run_id
 
 
+def test_ecommerce_research_passes_visual_fields(monkeypatch):
+    received_kwargs = {}
+
+    async def fake_run(**kwargs):
+        received_kwargs.update(kwargs)
+        return {
+            "run_id": "ecom_20260623090000_portable-blender_abc123",
+            "query": kwargs["query"],
+            "target_market": kwargs["target_market"],
+            "trend_result": {},
+            "competitor_result": {},
+            "review_result": {},
+            "opportunity_score": {},
+            "quality_check": {},
+            "audit_log": [],
+            "agent_trace": [],
+            "evaluation_summary": {},
+            "human_review": {"review_status": "pending"},
+            "eval_result": {},
+            "mcp_context": {},
+            "visual_result": {"status": "success", "assets": [{"asset_id": "visual_product_01"}]},
+            "final_report": "# Report",
+            "output_paths": {"visual_assets": "visual-assets.json"},
+        }
+
+    monkeypatch.setattr(ecommerce_api, "run_ecommerce_research", fake_run)
+
+    response = _client().post(
+        "/api/ecommerce/research",
+        json={
+            "query": "portable blender",
+            "visual_enabled": True,
+            "visual_model": "doubao-seedream-4-5-251128",
+            "visual_image_count": 3,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert received_kwargs["visual_enabled"] is True
+    assert received_kwargs["visual_model"] == "doubao-seedream-4-5-251128"
+    assert received_kwargs["visual_image_count"] == 3
+    assert data["visual_result"]["status"] == "success"
+    assert data["visual_assets"][0]["asset_id"] == "visual_product_01"
+
+
+def test_ecommerce_websocket_passes_visual_fields(monkeypatch):
+    received_kwargs = {}
+
+    async def fake_run(**kwargs):
+        received_kwargs.update(kwargs)
+        return {
+            "run_id": "ecom_20260623090000_portable-blender_abc123",
+            "query": kwargs["query"],
+            "target_market": kwargs["target_market"],
+            "trend_result": {},
+            "competitor_result": {},
+            "review_result": {},
+            "opportunity_score": {},
+            "quality_check": {},
+            "audit_log": [],
+            "agent_trace": [],
+            "evaluation_summary": {},
+            "human_review": {"review_status": "pending"},
+            "eval_result": {},
+            "mcp_context": {},
+            "visual_result": {"status": "skipped", "assets": []},
+            "final_report": "# Report",
+            "output_paths": {},
+        }
+
+    monkeypatch.setattr(ecommerce_api, "run_ecommerce_research", fake_run)
+
+    with _client().websocket_connect("/ws/ecommerce") as websocket:
+        websocket.send_json(
+            {
+                "query": "portable blender",
+                "visual_enabled": True,
+                "visual_model": "doubao-seedream-4-5-251128",
+                "visual_image_count": 1,
+            }
+        )
+        message = websocket.receive_json()
+
+    assert message["event"] == "done"
+    assert received_kwargs["visual_enabled"] is True
+    assert received_kwargs["visual_model"] == "doubao-seedream-4-5-251128"
+    assert received_kwargs["visual_image_count"] == 1
+
+
 def test_eval_run_lookup_returns_404_when_missing(tmp_path):
     """[FIX-4]/[FIX-6] unknown eval run is 404; output_dir is configurable."""
 

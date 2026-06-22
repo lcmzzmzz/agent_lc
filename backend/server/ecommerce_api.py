@@ -49,6 +49,10 @@ class EcommerceRequest(BaseModel):
     mcp_enabled: bool = False
     mcp_strategy: str = "fast"
     mcp_configs: list[dict[str, Any]] = Field(default_factory=list)
+    # Task 5：视觉生成相关字段（默认关闭，向后兼容）
+    visual_enabled: bool = False
+    visual_model: str = "doubao-seedream-4-5-251128"
+    visual_image_count: int = 6
 
 
 class EcommerceEvalRequest(BaseModel):
@@ -79,6 +83,9 @@ def _summarize(result: dict) -> dict:
         "human_review": result.get("human_review", {}),
         "eval_result": result.get("eval_result", {}),
         "mcp_context": result.get("mcp_context", {}),
+        # Task 5：视觉生成结果字段（向后兼容兜底）
+        "visual_result": result.get("visual_result", {}),
+        "visual_assets": result.get("visual_result", {}).get("assets", []),
     }
 
 
@@ -97,6 +104,10 @@ async def ecommerce_research(req: EcommerceRequest) -> dict:
         mcp_enabled=req.mcp_enabled,
         mcp_strategy=req.mcp_strategy,
         mcp_configs=req.mcp_configs,
+        # Task 5：视觉生成三个 kwarg 透传给 runner（runner 记进 state["visual_result"]）
+        visual_enabled=req.visual_enabled,
+        visual_model=req.visual_model,
+        visual_image_count=req.visual_image_count,
     )
     return _summarize(result)
 
@@ -181,6 +192,10 @@ async def ecommerce_websocket(websocket: WebSocket) -> None:
             mcp_enabled=bool(data.get("mcp_enabled", False)),
             mcp_strategy=data.get("mcp_strategy", "fast"),
             mcp_configs=data.get("mcp_configs", []),
+            # Task 5：视觉生成三个 kwarg 透传给 runner（注意类型强制转换）
+            visual_enabled=bool(data.get("visual_enabled", False)),
+            visual_model=data.get("visual_model", "doubao-seedream-4-5-251128"),
+            visual_image_count=int(data.get("visual_image_count", 6)),
         )
         await websocket.send_json(
             {
