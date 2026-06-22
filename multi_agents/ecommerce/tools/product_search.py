@@ -91,6 +91,18 @@ async def search_sources(
         raw_results = await search_fn(query, max_results_per_query)
         for raw in raw_results:
             source = normalize_source(raw)
+            # 【正经注释】Task 8：MCP 适配器归一化后的结果带 source_type="mcp" + tool_name/server_name
+            # 两个溯源字段，但 source_normalizer.normalize_source 只产出 EcommerceSource 标准五字段
+            # （title/url/source_type/snippet/content），会把这俩丢掉。这里在 normalize 之后补回，
+            # 让后续 Agent 能区分「这条证据来自 MCP 哪个工具/哪个 server」。
+            # 注意：raw 是 search_fn 返回的原始 dict（mcp_adapter 输出形状），source 是归一化后的；
+            # 我们读 raw 的 tool_name/server_name（normalize_source 不会改 raw），写进 source。
+            # 【大白话注释】MCP 来源的结果带「哪个工具给的、哪个服务给的」两个标签，
+            # 普通的整理函数会把这俩扔掉，这里捡回来贴上，方便后面知道证据出处。
+            if raw.get("source_type") == "mcp":
+                source["source_type"] = "mcp"
+                source["tool_name"] = raw.get("tool_name", "")
+                source["server_name"] = raw.get("server_name", "")
             url = source.get("url", "")
             if url and url in seen_urls:
                 continue

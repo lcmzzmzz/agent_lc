@@ -165,3 +165,23 @@ async def test_graph_records_failure_when_parallel_agent_raises(monkeypatch):
     assert summary["failure_count"] == 1
     assert any(err["agent"] == "TrendResearchAgent" for err in updated["errors"])
     assert updated["trend_result"]["summary"] == ""
+
+
+@pytest.mark.asyncio
+async def test_runner_records_mcp_context_when_enabled(tmp_path):
+    async def mcp_search(query, max_results, mcp_configs, mcp_strategy):
+        return [{"title": "MCP", "url": "https://example.com/mcp", "content": "mcp content"}]
+
+    result = await run_ecommerce_research(
+        query="portable blender",
+        output_dir=tmp_path,
+        search_fn=fake_search,
+        mcp_enabled=True,
+        mcp_strategy="fast",
+        mcp_configs=[{"name": "demo"}],
+        mcp_search_fn=mcp_search,
+    )
+
+    assert result["mcp_context"]["enabled"] is True
+    assert result["mcp_context"]["tool_calls"]
+    assert result["evaluation_summary"]["mcp_enabled"] is True

@@ -35,6 +35,7 @@ from multi_agents.ecommerce.runtime.policy_guard import (
     validate_research_request,
 )
 from multi_agents.ecommerce.state import EcommerceResearchState, create_initial_state
+from multi_agents.ecommerce.tools.mcp_adapter import McpSearchFn, make_mcp_augmented_search_fn
 from multi_agents.ecommerce.tools.product_search import SearchFn
 
 # 全链路日志统一走这个 logger；各子模块 logger（logging.getLogger("multi_agents.ecommerce.xxx")）
@@ -125,11 +126,14 @@ async def run_ecommerce_research(
     search_fn: SearchFn | None = None,  # 检索函数（None → 默认 Tavily；测试传 fake_search）
     llm_fn: LlmFn | None = None,        # 大模型函数（None → 全程不调 LLM，走规则）
     progress_callback: ProgressFn | None = None,  # 前端进度回调（None = 无前端/测试）
-    # MCP 相关：Task 4 仅接住这三个 kwarg 并写进 state["mcp_context"]，
-    # 真正的 MCP 检索接线在 Task 8；这里默认值保持向后兼容（不传 = 关闭 MCP）。
+    # MCP 相关：Task 4 接住 mcp_enabled/mcp_strategy/mcp_configs 并写进 state["mcp_context"]；
+    # Task 8 在此基础上新增 mcp_search_fn 参数，并在 resolved_search_fn 外再包一层
+    # make_mcp_augmented_search_fn —— 真正按 mcp_enabled 把 MCP 证据追加到 base 检索结果之后。
+    # 默认值保持向后兼容：不传 = 关闭 MCP、不注入 MCP 客户端 → 等价于纯 base 检索。
     mcp_enabled: bool = False,          # 是否启用 MCP 工具检索
     mcp_strategy: str = "fast",         # MCP 策略：fast / standard / deep
     mcp_configs: list[dict[str, Any]] | None = None,  # MCP server 配置（None = 不附加额外配置）
+    mcp_search_fn: McpSearchFn | None = None,  # MCP 检索函数（None → 空实现兜底，不追加任何 MCP 结果）
 ) -> EcommerceResearchState:            # 返回完整 state（含 output_paths / evaluation_summary）
     """端到端跑一次跨境电商选品调研，并写出报告/审计/质检/log 文件。"""
     # ── ① 开日志：挂本次研究的 FileHandler + 开两道闸门（返回 handler 供结束时摘）──
@@ -173,6 +177,22 @@ async def run_ecommerce_research(
         }
         budget_manager = BudgetManager(state["governance"], get_budget_config())  # 2. 建预算管家：传 governance【引用】（闭包共享起点）+ 工厂取预算上限
         resolved_search_fn = _resolve_search_fn(search_fn)                        # 3. 选检索源：传入优先，否则默认 Tavily
+        # 【正经注释】Task 8：在 base 检索外再包一层 MCP 增强。mcp_enabled=False 或无 mcp_configs
+        # 时，augmented 函数等价于透传 base（不追加任何 MCP 结果、不记账）；
+        # mcp_enabled=True 且配置了 server 时，每次检索会先跑 base，再跑 MCP、归一化、追加（capped at max_results），
+        # MCP 抛任何异常都降级为「仅返回 base」，绝不阻塞主链路。governance 与 mcp_context 共享同一引用，
+        # augmented 函数原地写账本，evaluation_summary / API 返回能直接读到 tool_calls / external_api_call_count。
+        # 【大白话注释】给刚选好的搜索函数再套个「MCP 外挂」——开了 MCP 就把 MCP 结果接在后面，
+        # 没开或 MCP 出错都不影响原本的搜索，只是顺带在治理账本上记一笔。
+        resolved_search_fn = make_mcp_augmented_search_fn(
+            resolved_search_fn,
+            mcp_enabled=mcp_enabled,
+            mcp_configs=mcp_configs or [],
+            mcp_strategy=mcp_strategy,
+            governance=state["governance"],
+            mcp_context=state["mcp_context"],
+            mcp_search_fn=mcp_search_fn,
+        )
         final_state = await run_ecommerce_graph(  # 4. ★ 跑完整 langgraph（内部 build + compile + ainvoke）
             state,
             search_fn=resolved_search_fn,        # 注入检索能力（闭包进节点）  这只是个类
