@@ -39,6 +39,11 @@ from multi_agents.ecommerce.agents.trend_researcher import run_trend_research
 from multi_agents.ecommerce.llm_helper import LlmFn
 from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
 from multi_agents.ecommerce.runtime.execution_guard import ExecutionGuard
+from multi_agents.ecommerce.runtime.trace_recorder import (
+    emit_trace,
+    finish_trace_node,
+    start_trace_node,
+)
 from multi_agents.ecommerce.state import EcommerceGraphState, EcommerceResearchState
 from multi_agents.ecommerce.tools.product_search import SearchFn, make_budgeted_search_fn
 
@@ -51,22 +56,27 @@ ProgressFn = Callable[[str, dict], Awaitable[None]]
 def _fresh_child(
     state: dict, governance: dict[str, object]
 ) -> dict[str, object]:
-    """构造 node 用的子状态：继承只读/前置字段，fresh audit_log/errors，governance 用闭包共享引用。
+    """构造 node 用的子状态：继承只读/前置字段，fresh audit_log/errors/agent_trace，
+    governance 用闭包共享引用。
 
     【正经注释】
-    关键：每个 node 都在【全新空】的 audit_log/errors 上 append，最后只把这两份【增量】返回，
-    由 EcommerceGraphState 的 Annotated[list, operator.add] reducer 自动拼接，避免全量返回导致的
-    重复累加。governance 用闭包捕获的同一对象（绝不来自 state channel），保证并发分支写的事件
-    都落到同一账本。
+    关键：每个 node 都在【全新空】的 audit_log/errors/agent_trace 上 append，最后只把这三份
+    【增量】返回，由 EcommerceGraphState 的 Annotated[list, operator.add] reducer 自动拼接，
+    避免全量返回导致的重复累加。governance 用闭包捕获的同一对象（绝不来自 state channel），
+    保证并发分支写的事件都落到同一账本。
+
+    agent_trace 与 audit_log/errors 同样在【全新空】list 上写、只返回增量，
+    由 EcommerceGraphState 的 Annotated[list, operator.add] reducer 自动拼接，
+    避免并发分支共享父 list 导致的重复累加。
 
     【大白话注释】
     每个节点开工前领一本「空白日志本」，干完只把这本新写的几行交上去，图自动把它们订在一起。
     治理账本则是大家共用闭包里那一本（不能走图的通道，否则并发写会报错）。
     """
-    # 复制当前 state，但：audit_log/errors 清空（让节点在「空白本」上写、只返回增量，
+    # 复制当前 state，但：audit_log/errors/agent_trace 清空（让节点在「空白本」上写、只返回增量，
     # 配合 Annotated[list, operator.add] reducer 自动拼接，避免重复累加）；
     # governance 换成闭包共享的那个引用（绝不来自 state channel，避免并发写冲突）
-    return {**state, "audit_log": [], "errors": [], "governance": governance}
+    return {**state, "audit_log": [], "errors": [], "agent_trace": [], "governance": governance}
 
 
 def _failed_child_state(
@@ -111,6 +121,50 @@ def _failed_child_state(
     return child
 
 
+def _score_summary(result: dict, *score_keys: str) -> dict:
+    """从研究分支结果里抽 trace 的 output_summary（证据数/置信度/相关分项/打分方式）。"""
+    scores = {
+        key: result.get(key)
+        for key in score_keys
+        if result.get(key) is not None
+    }
+    return {
+        "source_count": len(result.get("evidence", [])),
+        "confidence": result.get("confidence", 0.0),
+        "scores": scores,
+        "scored_by": result.get("scored_by", "rule"),
+    }
+
+
+def _planner_input_summary(s: dict) -> dict:
+    """planner 节点输入摘要（query / 市场 / 平台 / 深度）。"""
+    return {
+        "query": s.get("query"),
+        "target_market": s.get("target_market"),
+        "platforms": s.get("platforms", []),
+        "depth": s.get("depth"),
+    }
+
+
+def _planner_output_summary(plan: dict) -> dict:
+    """planner 节点输出摘要（各类 sub-query 与风险关注点数量）。"""
+    return {
+        "trend_query_count": len(plan.get("trend_queries", [])),
+        "competitor_query_count": len(plan.get("competitor_queries", [])),
+        "review_query_count": len(plan.get("review_queries", [])),
+        "risk_focus_count": len(plan.get("risk_focus", [])),
+    }
+
+
+def _writer_output_summary(report: str) -> dict:
+    """writer 节点输出摘要（报告长度/章节数/引用数）。"""
+    return {
+        "report_chars": len(report or ""),
+        "section_count": (report or "").count("\n## "),
+        "citation_count": (report or "").count("http"),
+    }
+
+
 def build_ecommerce_graph(
     state: EcommerceResearchState,
     *,                              # ← 单独的 * 是「关键字参数分隔符」：之后的参数调用时必须用关键字传（防传串）
@@ -142,19 +196,34 @@ def build_ecommerce_graph(
         # s = langgraph 运行时注入的「当前 state」（节点签名约定：第一个参数永远是当前 state）
         await _emit("start", {"query": s.get("query"), "market": s.get("target_market")})
         child = _fresh_child(s, governance)  # 复制 s + 清空日志本 + 换上闭包的 governance
+        trace_idx = start_trace_node(
+            child,
+            node="planner",
+            agent="ProductResearchPlannerAgent",
+            input_summary=_planner_input_summary(s),
+        )
         out = run_planner(child)  # 同步调 planner，生成 trend/competitor/review 的 sub-queries
-        print(f'planner_node:out: {out}')
+        plan = out.get("research_plan", {})
+        logger.debug("planner_node out: %s", out)
+        record = finish_trace_node(
+            child,
+            trace_idx,
+            status="success",
+            output_summary=_planner_output_summary(plan),
+        )
+        await emit_trace(progress_callback, record)
         await _emit(
             "planner_done",
-            {"queries": len(out.get("research_plan", {}).get("trend_queries", []))},
+            {"queries": len(plan.get("trend_queries", []))},
         )
         # research_running 在 planner 末尾发【一次】，而不是每个 research 节点发
         await _emit("research_running", {"agents": ["trend", "competitor", "review"]})
         # 节点只返回【要更新的字段】（不是整个 state）；langgraph 拿这个 dict 合并进 state：
-        # research_plan 是 plain channel（覆盖）；audit_log 挂 operator.add reducer（与现有拼接）
+        # research_plan 是 plain channel（覆盖）；audit_log/agent_trace 挂 operator.add reducer（与现有拼接）
         return {
-            "research_plan": out.get("research_plan", {}),
+            "research_plan": plan,
             "audit_log": out["audit_log"],
+            "agent_trace": child["agent_trace"],
         }
 
     # ---- 通用并发研究节点（模板）---- trend/competitor/review 三路都调它，只是填不同参数 ----
@@ -167,6 +236,16 @@ def build_ecommerce_graph(
         s: dict,                    # langgraph 注入的当前 state
     ) -> dict:
         child = _fresh_child(s, governance)  #拿到state 副本
+        trace_idx = start_trace_node(
+            child,
+            node=result_key.replace("_result", ""),
+            agent=agent_name,
+            input_summary={
+                "query": s.get("query"),
+                "target_market": s.get("target_market"),
+                "plan": s.get("research_plan", {}),
+            },
+        )
         # make_budgeted_search_fn：工厂返回一个【闭包】，把裸 search_fn 包成「带预算闸门 + agent 身份」的搜索函数
         branch_search_fn = make_budgeted_search_fn(
             search_fn, budget_manager, agent_name=agent_name
@@ -188,12 +267,37 @@ def build_ecommerce_graph(
             res = _failed_child_state(
                 s, governance, agent=agent_name, result_key=result_key, exc=exc
             )
-        # 只返回增量字段；audit_log/errors 靠 reducer 与现有拼接，governance 不在这里返回（走闭包）
-        print(f'{agent_name}:out: {res}')
+        # res 总是已填充（guard 抛错走 _failed_child_state）；从这里开始 trace 总能 finish
+        score_keys = {
+            "trend_result": ("trend_score",),
+            "competitor_result": ("competition_score",),
+            "review_result": ("pain_point_score",),
+        }.get(result_key, ())
+        result = res.get(result_key, {})
+        status = "partial" if result.get("data_failed") or result.get("error") else "success"
+        warnings = []
+        if result.get("error"):
+            warnings.append(str(result["error"]))
+        if res.get("audit_log"):
+            warning = res["audit_log"][-1].get("warning")
+            if warning:
+                warnings.append(str(warning))
+        record = finish_trace_node(
+            child,
+            trace_idx,
+            status=status,
+            output_summary=_score_summary(result, *score_keys),
+            warnings=warnings,
+            error=str(result.get("error", "")),
+        )
+        await emit_trace(progress_callback, record)
+        # 只返回增量字段；audit_log/errors/agent_trace 靠 reducer 与现有拼接，governance 不在这里返回（走闭包）
+        logger.debug("%s out: %s", agent_name, res)
         return {
             result_key: res[result_key],
             "audit_log": res["audit_log"],
             "errors": res["errors"],
+            "agent_trace": child["agent_trace"],
         }
 
     # ---- 三路并发研究节点 ---- 只是往 _research_node 模板填不同参数 ----
@@ -240,36 +344,118 @@ def build_ecommerce_graph(
             },
         )
         child = _fresh_child(s, governance)
+        trace_idx = start_trace_node(
+            child,
+            node="scoring",
+            agent="OpportunityScoringAgent",
+            input_summary={
+                "trend_score": s.get("trend_result", {}).get("trend_score"),
+                "competition_score": s.get("competitor_result", {}).get("competition_score"),
+                "pain_point_score": s.get("review_result", {}).get("pain_point_score"),
+            },
+        )
         # LLM 优先打分；超预算/LLM 失败时 run_opportunity_scoring 内部自动降级为规则评分
         out = await run_opportunity_scoring(
             child, llm_fn=llm_fn, budget_manager=budget_manager
         )
-        print(f'scoring_node:out: {out}')
+        score = out["opportunity_score"]
+        logger.debug("scoring_node out: %s", out)
+        record = finish_trace_node(
+            child,
+            trace_idx,
+            status="success",
+            output_summary={
+                "source_count": score.get("evidence_score", 0),
+                "confidence": out["audit_log"][-1].get("confidence", 0.0) if out["audit_log"] else 0.0,
+                "scores": {
+                    "trend_score": score.get("trend_score"),
+                    "competition_score": score.get("competition_score"),
+                    "pain_point_score": score.get("pain_point_score"),
+                    "margin_score": score.get("margin_score"),
+                    "risk_score": score.get("risk_score"),
+                    "overall_score": score.get("overall_score"),
+                },
+                "scored_by": score.get("scored_by", "rule"),
+                "recommendation": score.get("recommendation"),
+            },
+        )
+        await emit_trace(progress_callback, record)
         await _emit(
             "scoring_done",
             {
-                "overall_score": out["opportunity_score"].get("overall_score"),
-                "scored_by": out["opportunity_score"].get("scored_by"),
-                "recommendation": out["opportunity_score"].get("recommendation"),
+                "overall_score": score.get("overall_score"),
+                "scored_by": score.get("scored_by"),
+                "recommendation": score.get("recommendation"),
             },
         )
-        return {"opportunity_score": out["opportunity_score"], "audit_log": out["audit_log"]}
+        return {
+            "opportunity_score": score,
+            "audit_log": out["audit_log"],
+            "agent_trace": child["agent_trace"],
+        }
 
     # ---- 写报告节点（同步）---- 把评分/趋势/竞品/评论拼成 Markdown 报告 ---- 发 report_done
     async def writer_node(s: dict) -> dict:
         child = _fresh_child(s, governance)
+        trace_idx = start_trace_node(
+            child,
+            node="writer",
+            agent="EcommerceReportWriterAgent",
+            input_summary={
+                "overall_score": s.get("opportunity_score", {}).get("overall_score"),
+                "recommendation": s.get("opportunity_score", {}).get("recommendation"),
+            },
+        )
         out = run_report_writer(child)  # 同步：按固定章节拼报告 + 收集引用
-        print(f'writer_node:out: {out}')
+        logger.debug("writer_node out: %s", out)
+        record = finish_trace_node(
+            child,
+            trace_idx,
+            status="success",
+            output_summary=_writer_output_summary(out["final_report"]),
+        )
+        await emit_trace(progress_callback, record)
         await _emit("report_done", {})
-        return {"final_report": out["final_report"], "audit_log": out["audit_log"]}
+        return {
+            "final_report": out["final_report"],
+            "audit_log": out["audit_log"],
+            "agent_trace": child["agent_trace"],
+        }
 
     # ---- 质检节点（同步）---- 检查引用覆盖/证据充分度/过度自信措辞 ---- 发 quality_done
     async def quality_node(s: dict) -> dict:
         child = _fresh_child(s, governance)
+        trace_idx = start_trace_node(
+            child,
+            node="quality",
+            agent="QualityReviewerAgent",
+            input_summary={
+                "report_chars": len(s.get("final_report", "") or ""),
+                "citation_count": (s.get("final_report", "") or "").count("http"),
+            },
+        )
         out = run_quality_review(child)  # 同步：基于真实痛点判定风险披露是否充分
-        print(f'quality_node:out: {out}')
-        await _emit("quality_done", {"passed": out["quality_check"].get("passed")})
-        return {"quality_check": out["quality_check"], "audit_log": out["audit_log"]}
+        quality = out["quality_check"]
+        logger.debug("quality_node out: %s", out)
+        record = finish_trace_node(
+            child,
+            trace_idx,
+            status="success" if quality.get("passed") else "partial",
+            output_summary={
+                "passed": quality.get("passed", False),
+                "citation_coverage": quality.get("citation_coverage", 0.0),
+                "evidence_sufficiency": quality.get("evidence_sufficiency", 0.0),
+                "issue_count": len(quality.get("issues", [])),
+            },
+            warnings=quality.get("issues", []),
+        )
+        await emit_trace(progress_callback, record)
+        await _emit("quality_done", {"passed": quality.get("passed")})
+        return {
+            "quality_check": quality,
+            "audit_log": out["audit_log"],
+            "agent_trace": child["agent_trace"],
+        }
 
     # ───────────────────────── 拼图：注册节点 + 连边 ─────────────────────────
     # 用【图专用】schema EcommerceGraphState（audit_log/errors 带 operator.add reducer，图专用）

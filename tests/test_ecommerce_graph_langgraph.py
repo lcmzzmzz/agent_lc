@@ -141,7 +141,8 @@ async def test_all_eight_progress_events_emitted_in_order(monkeypatch):
         "report_done",
         "quality_done",
     ]
-    assert events == expected, f"progress 事件序列不符: {events}"
+    stage_events = [event for event in events if event != "trace_node_done"]
+    assert stage_events == expected, f"progress 事件序列不符: {events}"
 
 
 # ---------------------------------------------------------------------------
@@ -196,3 +197,95 @@ async def test_research_node_failure_does_not_abort_graph(monkeypatch):
 def test_module_level_agent_imports_remain_patchable():
     for name in ("run_trend_research", "run_competitor_analysis", "run_review_insight"):
         assert hasattr(graph_mod, name), f"{name} 不在 graph 模块级，monkeypatch 契约会断"
+
+
+# ---------------------------------------------------------------------------
+# 8. trace: _fresh_child 必须给每个节点一份空白的 agent_trace，reducer 才能正确拼接增量
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fresh_child_resets_agent_trace_to_blank_slate():
+    """[FIX-1] _fresh_child must hand each node a private blank agent_trace
+    list, so the operator.add reducer stitches deltas without re-adding the
+    parent's accumulated records (which would double-count planner, etc.)."""
+    from multi_agents.ecommerce.graph import _fresh_child
+
+    parent = {
+        "agent_trace": [{"node": "planner"}],
+        "audit_log": [{"agent": "planner"}],
+        "errors": [],
+        "governance": {"events": []},
+    }
+    child = _fresh_child(parent, parent["governance"])
+
+    assert child["agent_trace"] == []
+    child["agent_trace"].append({"node": "trend"})
+    # mutating the child's trace must not touch the parent's list
+    assert parent["agent_trace"] == [{"node": "planner"}]
+
+
+@pytest.mark.asyncio
+async def test_graph_records_trace_for_all_nodes(monkeypatch):
+    monkeypatch.setattr(graph_mod, "run_trend_research", _ok_branch("trend_result", "TrendResearchAgent"))
+    monkeypatch.setattr(graph_mod, "run_competitor_analysis", _ok_branch("competitor_result", "CompetitorAnalysisAgent"))
+    monkeypatch.setattr(graph_mod, "run_review_insight", _ok_branch("review_result", "ReviewInsightAgent"))
+
+    state = create_initial_state("portable blender")
+    final = await run_ecommerce_graph(state, search_fn=_fake_search)
+
+    nodes = [row["node"] for row in final["agent_trace"]]
+    assert nodes.count("planner") == 1
+    assert nodes.count("trend") == 1
+    assert nodes.count("competitor") == 1
+    assert nodes.count("review") == 1
+    assert nodes.count("scoring") == 1
+    assert nodes.count("writer") == 1
+    assert nodes.count("quality") == 1
+    assert all(row["run_id"] == state["run_id"] for row in final["agent_trace"])
+    assert all(row["status"] in {"success", "partial"} for row in final["agent_trace"])
+
+
+@pytest.mark.asyncio
+async def test_trace_node_done_events_do_not_break_stage_order(monkeypatch):
+    events = []
+
+    async def progress(event, payload):
+        events.append(event)
+
+    monkeypatch.setattr(graph_mod, "run_trend_research", _ok_branch("trend_result", "TrendResearchAgent"))
+    monkeypatch.setattr(graph_mod, "run_competitor_analysis", _ok_branch("competitor_result", "CompetitorAnalysisAgent"))
+    monkeypatch.setattr(graph_mod, "run_review_insight", _ok_branch("review_result", "ReviewInsightAgent"))
+
+    state = create_initial_state("portable blender")
+    await run_ecommerce_graph(state, search_fn=_fake_search, progress_callback=progress)
+
+    stage_events = [event for event in events if event != "trace_node_done"]
+    assert stage_events == [
+        "start",
+        "planner_done",
+        "research_running",
+        "research_done",
+        "scoring_done",
+        "report_done",
+        "quality_done",
+    ]
+    assert events.count("trace_node_done") == 7
+
+
+@pytest.mark.asyncio
+async def test_failed_research_branch_gets_partial_trace(monkeypatch):
+    async def fail_trend(child, *, search_fn, llm_fn=None, budget_manager=None):
+        raise RuntimeError("trend boom")
+
+    monkeypatch.setattr(graph_mod, "run_trend_research", fail_trend)
+    monkeypatch.setattr(graph_mod, "run_competitor_analysis", _ok_branch("competitor_result", "CompetitorAnalysisAgent"))
+    monkeypatch.setattr(graph_mod, "run_review_insight", _ok_branch("review_result", "ReviewInsightAgent"))
+
+    state = create_initial_state("portable blender")
+    final = await run_ecommerce_graph(state, search_fn=_fake_search)
+
+    trend_trace = next(row for row in final["agent_trace"] if row["node"] == "trend")
+    assert trend_trace["status"] == "partial"
+    assert trend_trace["output_summary"]["source_count"] == 0
+    assert "trend boom" in trend_trace["warnings"][0]
