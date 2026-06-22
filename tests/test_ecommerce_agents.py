@@ -35,6 +35,15 @@ async def fake_llm_text(system: str, user: str) -> str:
     return "便携榨汁机在北美市场近年需求上升，夏季与健身场景拉动明显，整体呈稳定增长态势。"
 
 
+async def fake_trend_llm_json(system: str, user: str) -> str:
+    return (
+        '{"summary":"\\u4fbf\\u643a\\u69a8\\u6c41\\u673a demand is growing.",'
+        '"trend_score":8.0,"confidence":0.74,'
+        '"key_findings":["demand is growing"],"negative_signals":[],'
+        '"scoring_rationale":"LLM scored from source content."}'
+    )
+
+
 async def string_score_llm(system: str, user: str) -> str:
     """模拟模型把数字包成字符串返回。"""
     return (
@@ -121,9 +130,56 @@ async def test_run_trend_research_returns_result():
 @pytest.mark.asyncio
 async def test_run_trend_research_summary_uses_llm():
     state = run_planner(create_initial_state("portable blender"))
-    updated = await run_trend_research(state, search_fn=fake_search, llm_fn=fake_llm_text)
+    updated = await run_trend_research(
+        state, search_fn=fake_search, llm_fn=fake_trend_llm_json
+    )
     assert updated["trend_result"]["summary_source"] == "llm"
     assert "便携榨汁机" in updated["trend_result"]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_run_trend_research_uses_llm_json_score_for_negative_sources():
+    async def negative_search(query: str, max_results: int):
+        return [
+            {
+                "title": f"Weak demand {query}",
+                "href": f"https://example.com/weak-{query.replace(' ', '-')}",
+                "body": "Retailers report slowing demand and negative consumer interest.",
+            }
+        ]
+
+    async def trend_llm(system: str, user: str) -> str:
+        return (
+            '{"summary":"公开资料显示需求走弱。","trend_score":2.5,'
+            '"confidence":0.72,"key_findings":["需求走弱"],'
+            '"negative_signals":["负面报道较多"],'
+            '"scoring_rationale":"来源内容主要显示需求下降。"}'
+        )
+
+    state = run_planner(create_initial_state("portable blender"))
+    updated = await run_trend_research(state, search_fn=negative_search, llm_fn=trend_llm)
+
+    result = updated["trend_result"]
+    assert result["scored_by"] == "llm"
+    assert result["summary_source"] == "llm"
+    assert result["trend_score"] == 2.5
+    assert result["confidence"] == 0.72
+    assert result["negative_signals"] == ["负面报道较多"]
+
+
+@pytest.mark.asyncio
+async def test_run_trend_research_invalid_llm_json_marks_rule_fallback():
+    async def bad_json_llm(system: str, user: str) -> str:
+        return "not json"
+
+    state = run_planner(create_initial_state("portable blender"))
+    updated = await run_trend_research(state, search_fn=fake_search, llm_fn=bad_json_llm)
+
+    result = updated["trend_result"]
+    assert result["scored_by"] == "rule"
+    assert result["summary_source"] == "template"
+    assert result["trend_score"] == 7.0
+    assert "fallback" in result["scoring_rationale"]
 
 
 @pytest.mark.asyncio
