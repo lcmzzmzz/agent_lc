@@ -173,7 +173,6 @@ async def run_ecommerce_research(
             "enabled": mcp_enabled,
             "strategy": mcp_strategy,
             "tool_calls": [],  # Task 8 会在这里追加真实 MCP 工具调用记录
-            **({"configs": mcp_configs} if mcp_configs is not None else {}),
         }
         budget_manager = BudgetManager(state["governance"], get_budget_config())  # 2. 建预算管家：传 governance【引用】（闭包共享起点）+ 工厂取预算上限
         resolved_search_fn = _resolve_search_fn(search_fn)                        # 3. 选检索源：传入优先，否则默认 Tavily

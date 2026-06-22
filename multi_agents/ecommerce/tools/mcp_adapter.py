@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
+from multi_agents.ecommerce.runtime.policy_guard import redact_secrets
 from multi_agents.ecommerce.runtime.telemetry import increment_usage, record_event
 from multi_agents.ecommerce.tools.product_search import SearchFn
 
@@ -79,6 +80,53 @@ async def _empty_mcp_search(
     return []
 
 
+def _server_names(configs: list[dict[str, Any]]) -> list[str]:
+    return [str(redact_secrets(c.get("name", "mcp"))) for c in configs]
+
+
+def _redacted_error(exc: Exception) -> str:
+    redacted = redact_secrets({"error": str(exc)})
+    return str(redacted.get("error", ""))
+
+
+def _result_key(row: Mapping[str, Any]) -> str:
+    href = str(row.get("href") or row.get("url") or "").strip()
+    if href:
+        return f"href:{href}"
+    return f"title:{row.get('title', '')}|body:{row.get('body') or row.get('content') or ''}"
+
+
+def _merge_base_and_mcp_results(
+    base_results: list[dict[str, Any]],
+    mcp_results: list[dict[str, Any]],
+    max_results: int,
+) -> list[dict[str, Any]]:
+    limit = max(0, int(max_results))
+    if limit == 0:
+        return []
+    if not mcp_results:
+        return base_results[:limit]
+
+    seen = {_result_key(row) for row in base_results if _result_key(row)}
+    unique_mcp: list[dict[str, Any]] = []
+    for row in mcp_results:
+        key = _result_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_mcp.append(row)
+
+    if not unique_mcp:
+        return base_results[:limit]
+    if len(base_results) + len(unique_mcp) <= limit:
+        return [*base_results, *unique_mcp]
+
+    reserved_mcp_slots = min(len(unique_mcp), max(1, limit // 3))
+    selected_base = base_results[: max(0, limit - reserved_mcp_slots)]
+    remaining_slots = max(0, limit - len(selected_base))
+    return [*selected_base, *unique_mcp[:remaining_slots]]
+
+
 def make_mcp_augmented_search_fn(
     base_search_fn: SearchFn,
     *,
@@ -117,6 +165,8 @@ def make_mcp_augmented_search_fn(
     # 把本次 MCP 开关 / 策略刷进 mcp_context（全程共享同一 dict，evaluation_summary 也会读它）
     mcp_context["enabled"] = bool(mcp_enabled)
     mcp_context["strategy"] = mcp_strategy
+    mcp_context["config_count"] = len(configs)
+    mcp_context["servers"] = _server_names(configs)
     mcp_context.setdefault("tool_calls", [])
     # 没注入真实 MCP 客户端 → 用空实现兜底（不抛错、不算失败，只是不追加结果）
     selected_mcp_search = mcp_search_fn or _empty_mcp_search
@@ -142,7 +192,8 @@ def make_mcp_augmented_search_fn(
             # ⑤ 在 mcp_context 追加一条成功 tool_call 记录（server/tool/query/status/result_count）
             mcp_context["tool_calls"].append(
                 {
-                    "server": ",".join(str(c.get("name", "mcp")) for c in configs),
+                    "server": ",".join(_server_names(configs)),
+                    "server_names": _server_names(configs),
                     "tool": "search",
                     "query": query,
                     "status": "success",
@@ -157,18 +208,19 @@ def make_mcp_augmented_search_fn(
                 detail=f"mcp search returned {len(normalized)} results",
             )
             # ⑦ 合并 base + MCP，按 max_results 上限截断（避免 MCP 把结果灌爆）
-            return [*base_results, *normalized][:max_results]
+            return _merge_base_and_mcp_results(base_results, normalized, max_results)
         except Exception as exc:
             # ⑧ MCP 任何异常都不抛到外面：记 failed tool_call + failure 事件，只返回 base
             #    ★ 这是「MCP 故障不阻塞主链路」的关键降级分支
             mcp_context["tool_calls"].append(
                 {
-                    "server": ",".join(str(c.get("name", "mcp")) for c in configs),
+                    "server": ",".join(_server_names(configs)),
+                    "server_names": _server_names(configs),
                     "tool": "search",
                     "query": query,
                     "status": "failed",
                     "result_count": 0,
-                    "error": str(exc),
+                    "error": _redacted_error(exc),
                 }
             )
             record_event(
@@ -177,7 +229,7 @@ def make_mcp_augmented_search_fn(
                 agent="MCPSearchAdapter",
                 detail="mcp search failed",
                 error_type=exc.__class__.__name__,
-                error_message=str(exc),
+                error_message=_redacted_error(exc),
             )
             return base_results
 

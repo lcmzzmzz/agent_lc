@@ -178,6 +178,9 @@ async def ecommerce_websocket(websocket: WebSocket) -> None:
             depth=data.get("depth", "standard"),
             llm_fn=default_llm_fn if data.get("use_llm", True) else None,
             progress_callback=progress,
+            mcp_enabled=bool(data.get("mcp_enabled", False)),
+            mcp_strategy=data.get("mcp_strategy", "fast"),
+            mcp_configs=data.get("mcp_configs", []),
         )
         await websocket.send_json(
             {

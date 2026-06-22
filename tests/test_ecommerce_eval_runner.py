@@ -92,3 +92,43 @@ async def test_run_eval_cases_writes_summary(tmp_path):
     assert summary["pass_rate"] == 1.0
     assert (tmp_path / summary["eval_run_id"] / "summary.json").exists()
     assert (tmp_path / summary["eval_run_id"] / "case-index.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_run_eval_cases_persists_eval_result_into_case_artifacts(tmp_path):
+    cases_path = tmp_path / "cases.jsonl"
+    cases_path.write_text(json.dumps(_case()) + "\n", encoding="utf-8")
+    evaluation_path = tmp_path / "portable-blender-evaluation.json"
+    run_path = tmp_path / "portable-blender-run.json"
+    evaluation_path.write_text(json.dumps({"eval_passed": None}), encoding="utf-8")
+    run_path.write_text(
+        json.dumps(
+            {
+                "run_id": "ecom_20260622063000_portable-blender_abc123",
+                "output_paths": {
+                    "evaluation": str(evaluation_path),
+                    "run": str(run_path),
+                },
+                "evaluation_summary": {"eval_passed": None},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def fake_run(**kwargs):
+        result = _result()
+        result["output_paths"] = {
+            "evaluation": str(evaluation_path),
+            "run": str(run_path),
+        }
+        return result
+
+    summary = await run_eval_cases(cases_path, output_dir=tmp_path, run_fn=fake_run)
+
+    evaluation = json.loads(evaluation_path.read_text(encoding="utf-8"))
+    run_meta = json.loads(run_path.read_text(encoding="utf-8"))
+    assert summary["cases"][0]["passed"] is True
+    assert evaluation["eval_passed"] is True
+    assert evaluation["eval_score"] == 1.0
+    assert run_meta["evaluation_summary"]["eval_passed"] is True
+    assert run_meta["eval_result"]["passed"] is True

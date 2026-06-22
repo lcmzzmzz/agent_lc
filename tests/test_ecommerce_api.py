@@ -59,6 +59,49 @@ def test_ecommerce_research_response_includes_agentops_fields(monkeypatch):
     assert received_kwargs["mcp_configs"] == [{"name": "demo"}]
 
 
+def test_ecommerce_websocket_passes_mcp_fields(monkeypatch):
+    received_kwargs = {}
+
+    async def fake_run(**kwargs):
+        received_kwargs.update(kwargs)
+        return {
+            "run_id": "ecom_20260622063000_portable-blender_abc123",
+            "query": kwargs["query"],
+            "target_market": kwargs["target_market"],
+            "trend_result": {},
+            "competitor_result": {},
+            "review_result": {},
+            "opportunity_score": {},
+            "quality_check": {},
+            "audit_log": [],
+            "agent_trace": [],
+            "evaluation_summary": {},
+            "human_review": {"review_status": "pending"},
+            "eval_result": {},
+            "mcp_context": {"enabled": True, "strategy": "deep", "tool_calls": []},
+            "final_report": "# Report",
+            "output_paths": {},
+        }
+
+    monkeypatch.setattr(ecommerce_api, "run_ecommerce_research", fake_run)
+
+    with _client().websocket_connect("/ws/ecommerce") as websocket:
+        websocket.send_json(
+            {
+                "query": "portable blender",
+                "mcp_enabled": True,
+                "mcp_strategy": "deep",
+                "mcp_configs": [{"name": "demo"}],
+            }
+        )
+        message = websocket.receive_json()
+
+    assert message["event"] == "done"
+    assert received_kwargs["mcp_enabled"] is True
+    assert received_kwargs["mcp_strategy"] == "deep"
+    assert received_kwargs["mcp_configs"] == [{"name": "demo"}]
+
+
 def test_human_review_endpoint_saves_payload(monkeypatch, tmp_path):
     run_id = "ecom_20260622063000_portable-blender_abc123"
     saved_payloads = []

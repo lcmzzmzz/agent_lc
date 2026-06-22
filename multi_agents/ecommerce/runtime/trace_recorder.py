@@ -5,11 +5,13 @@ from __future__ import annotations
 import re
 import time
 import uuid
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
 _SLUG_RE = re.compile(r"\W+", flags=re.UNICODE)
+logger = logging.getLogger(__name__)
 
 
 def _slugify(value: str) -> str:
@@ -98,7 +100,14 @@ async def emit_trace(
 ) -> None:
     if progress_callback is None:
         return
-    await progress_callback("trace_node_done", dict(record))
+    try:
+        await progress_callback("trace_node_done", dict(record))
+    except Exception:
+        logger.warning(
+            "[trace] progress_callback failed node=%s",
+            record.get("node", ""),
+            exc_info=True,
+        )
 
 
 def summarize_trace(trace: Sequence[Mapping[str, Any]]) -> dict[str, int]:

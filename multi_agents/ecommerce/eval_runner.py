@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from multi_agents.ecommerce.evaluation import build_evaluation_summary
 from multi_agents.ecommerce.runner import run_ecommerce_research
 
 RunFn = Callable[..., Awaitable[dict[str, Any]]]
@@ -86,6 +87,42 @@ def evaluate_case_result(
     }
 
 
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _persist_case_eval_result(
+    result: dict[str, Any],
+    eval_result: dict[str, Any],
+) -> dict[str, Any]:
+    result["eval_result"] = eval_result
+    evaluation_summary = build_evaluation_summary(result)
+    result["evaluation_summary"] = evaluation_summary
+
+    paths = result.get("output_paths", {}) or {}
+    evaluation_path = paths.get("evaluation")
+    if evaluation_path:
+        _write_json(Path(evaluation_path), evaluation_summary)
+
+    run_path = paths.get("run")
+    if run_path:
+        path = Path(run_path)
+        metadata = {}
+        if path.exists():
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+        metadata.update(
+            {
+                "run_id": result.get("run_id", metadata.get("run_id", "")),
+                "evaluation_summary": evaluation_summary,
+                "eval_result": eval_result,
+            }
+        )
+        _write_json(path, metadata)
+
+    return evaluation_summary
+
+
 async def run_eval_cases(
     cases_path: str | Path,
     *,
@@ -106,7 +143,7 @@ async def run_eval_cases(
             depth=case.get("depth", "standard"),
         )
         eval_result = evaluate_case_result(case, result)
-        result["eval_result"] = eval_result
+        evaluation_summary = _persist_case_eval_result(result, eval_result)
         case_results.append(eval_result)
         manifest.append(
             {
@@ -114,7 +151,7 @@ async def run_eval_cases(
                 "title": case.get("case_id", ""),
                 "query": case.get("query", ""),
                 "summary": {
-                    **result.get("evaluation_summary", {}),
+                    **evaluation_summary,
                     "eval_passed": eval_result["passed"],
                     "eval_score": eval_result["score"],
                 },

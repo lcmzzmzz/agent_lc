@@ -101,6 +101,14 @@ async def test_emit_trace_uses_existing_progress_callback_contract():
     assert events == [("trace_node_done", record)]
 
 
+@pytest.mark.asyncio
+async def test_emit_trace_does_not_raise_when_progress_callback_fails():
+    async def progress(event, payload):
+        raise RuntimeError("socket closed")
+
+    await emit_trace(progress, {"node": "trend", "status": "success"})
+
+
 def test_summarize_trace_counts_status_and_scoring_paths():
     summary = summarize_trace(
         [

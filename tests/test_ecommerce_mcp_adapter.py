@@ -55,6 +55,37 @@ async def test_mcp_augmented_search_combines_base_and_mcp_results():
 
 
 @pytest.mark.asyncio
+async def test_mcp_augmented_search_preserves_mcp_result_when_base_fills_limit():
+    governance = empty_governance_state()
+    mcp_context = {"enabled": True, "strategy": "fast", "tool_calls": []}
+
+    async def base_search(query, max_results):
+        return [
+            {"title": f"Base {idx}", "href": f"https://example.com/base-{idx}", "body": "base"}
+            for idx in range(max_results)
+        ]
+
+    async def mcp_search(query, max_results, mcp_configs, mcp_strategy):
+        return [{"title": "MCP", "url": "https://example.com/mcp", "content": "mcp"}]
+
+    search = make_mcp_augmented_search_fn(
+        base_search,
+        mcp_enabled=True,
+        mcp_configs=[{"name": "demo"}],
+        mcp_strategy="fast",
+        governance=governance,
+        mcp_context=mcp_context,
+        mcp_search_fn=mcp_search,
+    )
+
+    results = await search("portable blender", 3)
+
+    assert len(results) == 3
+    assert "MCP" in [row["title"] for row in results]
+    assert summarize_governance(governance)["external_api_call_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_mcp_failure_returns_base_results_and_records_failure():
     governance = empty_governance_state()
     mcp_context = {"enabled": True, "strategy": "fast", "tool_calls": []}
@@ -80,3 +111,34 @@ async def test_mcp_failure_returns_base_results_and_records_failure():
     assert results == [{"title": "Base", "href": "https://example.com/base", "body": "base"}]
     assert summarize_governance(governance)["failure_count"] == 1
     assert mcp_context["tool_calls"][0]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_mcp_failure_redacts_secret_like_error_messages():
+    governance = empty_governance_state()
+    mcp_context = {"enabled": True, "strategy": "fast", "tool_calls": []}
+
+    async def base_search(query, max_results):
+        return [{"title": "Base", "href": "https://example.com/base", "body": "base"}]
+
+    async def mcp_search(query, max_results, mcp_configs, mcp_strategy):
+        raise RuntimeError("APIFY_API_TOKEN=secret-token failed")
+
+    search = make_mcp_augmented_search_fn(
+        base_search,
+        mcp_enabled=True,
+        mcp_configs=[{"name": "demo", "env": {"APIFY_API_TOKEN": "secret-token"}}],
+        mcp_strategy="fast",
+        governance=governance,
+        mcp_context=mcp_context,
+        mcp_search_fn=mcp_search,
+    )
+
+    await search("portable blender", 5)
+
+    call = mcp_context["tool_calls"][0]
+    event = governance["events"][0]
+    assert call["error"] == "APIFY_API_TOKEN=[REDACTED] failed"
+    assert event["error_message"] == "APIFY_API_TOKEN=[REDACTED] failed"
+    assert "secret-token" not in str(mcp_context)
+    assert "secret-token" not in str(governance)
