@@ -118,10 +118,35 @@ def make_budgeted_search_fn(
     """
 
     async def wrapped(query: str, max_results: int) -> list[dict[str, Any]]:
+        """带「策略检查 + 预算闸门」的搜索包装函数。
+
+        【正经注释】
+        在透传给真正的 search_fn 之前，依次做两道前置校验：
+        1) assert_tool_allowed：依据 agent_name 校验当前 agent 是否被策略允许
+           调用 search 工具（工具黑白名单 / 权限治理）。不被允许则记 policy
+           事件并原样抛出 PolicyViolation（硬拦截，交由上层处理）；
+        2) budget_manager.can_use("search")：查询剩余搜索预算，超限则记一笔
+           record_degradation（软降级，审计可见）并返回空列表 []，不中断流程。
+        两关都过才 record 消费一次、再真正调用检索函数。
+        budget_manager 为 None 时整个闸门跳过、直接透传，兼容无治理的旧调用路径。
+
+        【大白话注释】
+        这个函数就是给「搜索」加了个安检口，真正去搜之前先过两道关：
+        - 第一关（策略）：这个 agent 配不配用搜索工具？不配就在治理日志记一笔
+          「被策略拦了」，然后直接把错误抛上去（硬拦，不搜了）；
+        - 第二关（预算）：搜索额度还有没有？烧光了就记一笔「降级了」，
+          然后返回空列表（软拦，假装搜了个空，后面的流程还能继续跑）。
+        两关都过了，才在账本上记「搜了一次」，真正去搜。
+        如果根本没装预算管理器（budget_manager 是 None），那就啥都不查，直接搜。
+        """
         if budget_manager is not None:
+            # 【正经注释】第一关：策略权限校验。断言当前 agent 是否被允许调用 search 工具。
+            # 【大白话注释】先问一句：这个 agent 有没有资格用搜索工具？
             try:
                 assert_tool_allowed(agent_name, "search")
             except PolicyViolation as exc:
+                # 【正经注释】策略禁止：在治理事件流记一笔 policy 拦截（policy_blocked=True），再原样向上抛异常（硬拦截）。
+                # 【大白话注释】不让搜——在治理日志写一笔「被策略拦了」，然后把错误抛出去，上层自己看着办。
                 record_event(
                     budget_manager.governance,
                     kind="policy",
@@ -130,10 +155,20 @@ def make_budgeted_search_fn(
                     policy_blocked=True,
                 )
                 raise
+            # 【正经注释】第二关：预算校验。can_use 返回 False 表示 search 预算已耗尽。
+            # 【大白话注释】再查一句：搜索额度还有没有？没钱了就走下面的降级。
             if not budget_manager.can_use("search"):
+                # 【正经注释】软降级：记一笔降级事件（审计可见），返回空列表而非抛异常，保证流程不中断。
+                # 【大白话注释】额度烧光了——记一笔「降级了」，然后返回个空列表（假装搜了个寂寞），不报错，让后面流程还能跑。
                 budget_manager.record_degradation("SearchFn", "search budget exceeded")
                 return []
+            # 【正经注释】两关通过：消费一次 search 预算，用量计数 +1。
+            # 【大白话注释】过关了——在预算账本上记一笔「搜了一次」。
             budget_manager.record("search")
+        # 【正经注释】无治理（budget_manager 为 None）或两关全部通过，透传给真正的检索函数并 await 结果。
+        # 【大白话注释】该查的都查完了，现在才真正去搜，把搜到的结果原样返回。
         return await search_fn(query, max_results)
 
+    # 【正经注释】返回包装后的协程函数；调用方拿到的是这个带闸门的版本，原 search_fn 被它包在内层。
+    # 【大白话注释】把这个「安检过的搜索函数」交出去——以后谁用它，都会自动先过那两道关。
     return wrapped

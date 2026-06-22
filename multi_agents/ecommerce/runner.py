@@ -21,7 +21,6 @@ import asyncio
 import datetime
 import json
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -38,17 +37,18 @@ from multi_agents.ecommerce.runtime.policy_guard import (
 from multi_agents.ecommerce.state import EcommerceResearchState, create_initial_state
 from multi_agents.ecommerce.tools.product_search import SearchFn
 
-# 全链路日志统一走这个 logger；各子模块 logger 会 propagate 到这里
+# 全链路日志统一走这个 logger；各子模块 logger（logging.getLogger("multi_agents.ecommerce.xxx")）
+# 会自动 propagate 冒泡到这里，所以只在这挂一个 handler 就能收整条链路的日志
 logger = logging.getLogger("multi_agents.ecommerce")
 
-_SLUG_RE = re.compile(r"[^\w]+", flags=re.UNICODE)
-_LOG_FORMAT = logging.Formatter("%(asctime)s %(levelname)s %(name)s - %(message)s")
+_SLUG_RE = re.compile(r"\W+", flags=re.UNICODE)  # 匹配「非单词字符」（空格/标点等）→ slugify 用来切成短横
+_LOG_FORMAT = logging.Formatter("%(asctime)s %(levelname)s %(name)s - %(message)s")  # 日志行格式：时间 级别 logger名 - 消息
 
 
 def slugify(value: str) -> str:
     """把品类关键词转成安全的文件名片段（兼容中英文，无结果时回退）。"""
-    slug = _SLUG_RE.sub("-", value.lower()).strip("-")
-    return slug or "ecommerce-research"
+    slug = _SLUG_RE.sub("-", value.lower()).strip("-")  # 非单词字符→短横，如"便携 榨汁机!"→"便携-榨汁机"
+    return slug or "ecommerce-research"   # 全是符号时回退，保证文件名非空
 
 
 async def default_search_fn(query: str, max_results: int) -> list[dict[str, Any]]:
@@ -59,16 +59,19 @@ async def default_search_fn(query: str, max_results: int) -> list[dict[str, Any]
     """
 
     def _sync_search() -> list[dict[str, Any]]:
+        # 延迟 import：只在真正检索时才依赖 gpt_researcher，避免 runner 一导入就强耦合
         try:
             from gpt_researcher.actions.retriever import get_default_retriever
 
             retriever_cls = get_default_retriever()  # 例如 TavilySearch 类
             retriever = retriever_cls(query=query)
             return retriever.search(max_results=max_results) or []
-        except Exception as exc:  # 检索失败不应中断主流程
+        except Exception as exc:  # 检索失败不应中断主流程 → 降级返回空，让上游走"无证据"分支
             logger.warning(f"[search] 默认检索失败 query='{query}': {exc}")
             return []
 
+    # 关键：retriever.search() 是【同步阻塞】调用，直接 await 会卡住事件循环；
+    # asyncio.to_thread 把它丢到线程池 → trend/competitor/review 三路的多次检索才能【真正并发】
     return await asyncio.to_thread(_sync_search)
 
 
@@ -77,23 +80,23 @@ def _setup_run_log(query: str) -> tuple[logging.FileHandler, Path]:
     log_dir = Path("logs/ecommerce")
     log_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = log_dir / f"{ts}_{slugify(query)}.log"
-    handler = logging.FileHandler(log_path, encoding="utf-8")
-    handler.setLevel(logging.INFO)
-    handler.setFormatter(_LOG_FORMAT)
+    log_path = log_dir / f"{ts}_{slugify(query)}.log"   # 每次研究一个独立日志文件（时间戳保证不重名）
+    handler = logging.FileHandler(log_path, encoding="utf-8")  # 出口：往这个文件写（utf-8 支持中文）
+    handler.setLevel(logging.INFO)                      # 闸门②（handler 级别）：只记 INFO+
+    handler.setFormatter(_LOG_FORMAT)                   # 套上行格式
     ecommerce_logger = logging.getLogger("multi_agents.ecommerce")
-    ecommerce_logger.addHandler(handler)
+    ecommerce_logger.addHandler(handler)                # 挂到父 logger → 子模块日志靠 propagate 冒泡进来
     # 确保该 logger 不会因自身 level 过滤掉 INFO
     if ecommerce_logger.level == logging.NOTSET or ecommerce_logger.level > logging.INFO:
-        ecommerce_logger.setLevel(logging.INFO)
-    return handler, log_path
+        ecommerce_logger.setLevel(logging.INFO)         # 闸门①（logger 级别）：默认 WARNING 会先把 INFO 拦掉，必须主动开
+    return handler, log_path                            # 返回 handler：结束时 _teardown_run_log 要拿它摘掉
 
 
 def _teardown_run_log(handler: logging.FileHandler) -> None:
     ecommerce_logger = logging.getLogger("multi_agents.ecommerce")
-    ecommerce_logger.removeHandler(handler)
-    handler.flush()
-    handler.close()
+    ecommerce_logger.removeHandler(handler)   # 摘掉本次 handler → 之后的日志不再写这个文件
+    handler.flush()                           # 刷盘：把缓冲区剩余内容写进文件
+    handler.close()                           # 关文件句柄，防泄漏
 
 
 def _resolve_search_fn(search_fn: SearchFn | None) -> SearchFn:
@@ -103,87 +106,148 @@ def _resolve_search_fn(search_fn: SearchFn | None) -> SearchFn:
     actor schema 不匹配且零测试，正确实现已在 review_scraper 的两步链路里，故移除。）
     """
     if search_fn is not None:
-        return search_fn
-    return default_search_fn
+        return search_fn      # 调用方显式传了（测试传 fake_search、程序化传自定义）→ 用它
+    return default_search_fn  # 没传 → 用默认 Tavily 检索
 
 
 async def run_ecommerce_research(
-    *,
-    query: str,
-    target_market: str = "US",
-    platforms: list[str] | None = None,
-    depth: str = "standard",
-    output_dir: str | Path = "outputs/ecommerce",
-    search_fn: SearchFn | None = None,
-    llm_fn: LlmFn | None = None,
-    progress_callback: ProgressFn | None = None,
-) -> EcommerceResearchState:
+    *,                                  # 关键字参数分隔符：调用时必须写参数名
+    query: str,                         # 选品关键词（如"便携榨汁机"）
+    target_market: str = "US",          # 目标市场（影响检索/价格区间口径）
+    platforms: list[str] | None = None, # 关注的平台（None → 默认 ["amazon","google"]）
+    depth: str = "standard",            # 研究深度：fast / standard / deep（影响检索条数与并发量）
+    output_dir: str | Path = "outputs/ecommerce",  # 报告/审计/质检/评估文件的输出目录
+    search_fn: SearchFn | None = None,  # 检索函数（None → 默认 Tavily；测试传 fake_search）
+    llm_fn: LlmFn | None = None,        # 大模型函数（None → 全程不调 LLM，走规则）
+    progress_callback: ProgressFn | None = None,  # 前端进度回调（None = 无前端/测试）
+) -> EcommerceResearchState:            # 返回完整 state（含 output_paths / evaluation_summary）
     """端到端跑一次跨境电商选品调研，并写出报告/审计/质检/log 文件。"""
-    handler, log_path = _setup_run_log(query)
+    # ── ① 开日志：挂本次研究的 FileHandler + 开两道闸门（返回 handler 供结束时摘）──
+    handler, log_path = _setup_run_log(query)   # 挂文件日志出口；handler 结束时要摘、log_path 给返回/前端用
     logger.info(
         f"========== 开始研究 query='{query}' market={target_market} "
-        f"depth={depth} platforms={platforms or ['amazon','google']} =========="
+        f"depth={depth} platforms={platforms or ['amazon','google']} =========="   # 在 log 留一条开始分隔线，便于定位本次研究
     )
+
+    # ── ② 策略校验：输入不合规就直接终止（PolicyGuard 先验）──
     try:
-        validate_research_request(
+        validate_research_request(              # PolicyGuard：检查 query/market/platforms/depth 是否合法（防注入/越权/非法值）
             query=query,
             target_market=target_market,
             platforms=platforms or ["amazon", "google"],
             depth=depth,
         )
-    except PolicyViolation as exc:
-        _teardown_run_log(handler)
-        raise ValueError(str(exc)) from exc
+    except PolicyViolation as exc:              # 校验不过 → 抛业务异常
+        # 已挂的 handler 必须先摘掉再抛，否则文件句柄泄漏
+        _teardown_run_log(handler)              # ⚠️ 先回收日志 handler，再抛错（资源清理）
+        raise ValueError(str(exc)) from exc     # 转成 ValueError 往上抛（统一错误类型）；from exc 保留原始异常链
+
+    # ── ③ 跑 graph：planner → {trend, competitor, review} → scoring → writer → quality ──
     try:
-        state = create_initial_state(
+        state = create_initial_state(           # 1. 造初始 state：填用户输入 + 各结果置空 + governance 初始化
             query=query,
             target_market=target_market,
             platforms=platforms,
             depth=depth,
         )
-        budget_manager = BudgetManager(state["governance"], get_budget_config())
-        resolved_search_fn = _resolve_search_fn(search_fn)
-        final_state = await run_ecommerce_graph(
+        budget_manager = BudgetManager(state["governance"], get_budget_config())  # 2. 建预算管家：传 governance【引用】（闭包共享起点）+ 工厂取预算上限
+        resolved_search_fn = _resolve_search_fn(search_fn)                        # 3. 选检索源：传入优先，否则默认 Tavily
+        final_state = await run_ecommerce_graph(  # 4. ★ 跑完整 langgraph（内部 build + compile + ainvoke）
             state,
-            search_fn=resolved_search_fn,
-            llm_fn=llm_fn,
-            progress_callback=progress_callback,
-            budget_manager=budget_manager,
+            search_fn=resolved_search_fn,        # 注入检索能力（闭包进节点）  这只是个类
+            llm_fn=llm_fn,                       # 注入大模型能力
+            progress_callback=progress_callback,  # 注入前端进度回调
+            budget_manager=budget_manager,       # 注入预算管家
         )
-    finally:
+    finally:                                     # ⚠️ finally：不管 graph 成功/失败都执行
+        # 不管成功失败都要摘 handler（关文件、防泄漏）
         logger.info(f"========== 研究结束，日志见 {log_path} ==========")
-        _teardown_run_log(handler)
+        _teardown_run_log(handler)               # 必摘 handler（成败都要清理文件句柄）
 
+    # ── ④ 落盘：把结果写成 report/audit/quality/evaluation 四个文件，并回填路径 ──
     output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+    output_path.mkdir(parents=True, exist_ok=True)  # 建输出目录（已存在不报错）
 
-    slug = slugify(query)
-    report_path = output_path / f"{slug}-report.md"
-    audit_path = output_path / f"{slug}-audit.json"
-    quality_path = output_path / f"{slug}-quality.json"
-    evaluation_path = output_path / f"{slug}-evaluation.json"
+    slug = slugify(query)                        # 关键词→安全文件名（"便携 榨汁机"→"便携-榨汁机"）
+    report_path = output_path / f"{slug}-report.md"           # 选品报告（Markdown）
+    audit_path = output_path / f"{slug}-audit.json"           # 审计日志（每步 agent 记录）
+    quality_path = output_path / f"{slug}-quality.json"       # 质量检查
+    evaluation_path = output_path / f"{slug}-evaluation.json" # 评估汇总（评分/置信度/治理）
 
-    report_path.write_text(final_state["final_report"], encoding="utf-8")
+    report_path.write_text(final_state["final_report"], encoding="utf-8")   # 写报告 .md
     audit_path.write_text(
-        json.dumps(final_state["audit_log"], ensure_ascii=False, indent=2),
+        json.dumps(final_state["audit_log"], ensure_ascii=False, indent=2),  # ensure_ascii=False 保留中文不转义
         encoding="utf-8",
-    )
+    )                                            # 写审计 .json
     quality_path.write_text(
         json.dumps(final_state["quality_check"], ensure_ascii=False, indent=2),
         encoding="utf-8",
-    )
-    evaluation_summary = build_evaluation_summary(final_state)
+    )                                            # 写质检 .json
+    evaluation_summary = build_evaluation_summary(final_state)  # 聚合评估指标（总分/置信度/证据数/降级数/耗时）
     evaluation_path.write_text(
         json.dumps(evaluation_summary, ensure_ascii=False, indent=2),
         encoding="utf-8",
-    )
-    final_state["evaluation_summary"] = evaluation_summary
+    )                                            # 写评估 .json
+    final_state["evaluation_summary"] = evaluation_summary      # 顺手塞回 state，调用方可直接读
 
-    final_state["output_paths"] = {
+    # output_paths 在 graph 跑完、落盘后才产生 → 不进图的 channel（所以 EcommerceGraphState 没这个字段）
+    final_state["output_paths"] = {              # 汇总所有输出文件路径，供调用方/前端定位
         "report": str(report_path),
         "audit": str(audit_path),
         "quality": str(quality_path),
         "evaluation": str(evaluation_path),
-        "log": str(log_path),
+        "log": str(log_path),                    # 带上 log 文件路径（块①那个，方便回看全链路日志）
     }
-    return final_state
+    return final_state                           # 返回完整 state（含 output_paths + evaluation_summary）
+
+
+if __name__ == '__main__':
+    # ── debug 全流程入口：用 Module name 模式跑 multi_agents.ecommerce.runner（见 PyCharm 配置）──
+    # 断点打法：在 graph.py 的 planner_node / trend_node / scoring_node 等任意节点打断点，
+    # Debug 跑本配置，即可单步追 START→planner→{trend,competitor,review}→scoring→writer→quality→END。
+    import asyncio
+    from pathlib import Path
+
+    from dotenv import load_dotenv
+
+    from multi_agents.ecommerce.llm_helper import default_llm_fn
+
+    # ① 加载项目根 .env（TAVILY_API_KEY / OPENAI_API_KEY+OPENAI_BASE_URL=DeepSeek / APIFY_API_TOKEN）。
+    #    runner.py 在 multi_agents/ecommerce/，往上 3 层 parent 才到项目根；load_dotenv 不带参数按 cwd 找（不稳），这里显式定位。
+    load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+
+    # ② debug 参数：改这里换关键词/市场/深度。depth: fast=最省最快 / standard=完整6维 / deep=最全最贵。
+    _QUERY = "汽车玩具"
+    _MARKET = "US"
+    _DEPTH = "standard"
+
+    async def _print_progress(event: str, payload: dict) -> None:
+        """轻量进度回调：把 graph 各阶段事件打到控制台（不用 WebSocket 也能看流程节奏）。"""
+        print(f"[progress] {event} {payload if payload else ''}")
+
+    async def _main() -> None:
+        print(
+            f"========== debug 全流程：query='{_QUERY}' market={_MARKET} depth={_DEPTH} =========="
+        )
+        # llm_fn=default_llm_fn 复用 GPT Researcher 的 SMART_LLM（DeepSeek）；
+        #   想【不花钱纯规则跑】就把 llm_fn 改成 None（scoring/summary 全走规则兜底）。
+        # 不传 search_fn → 默认 Tavily 检索（需 TAVILY_API_KEY + 联网，会消耗检索额度）。
+        state = await run_ecommerce_research(
+            query=_QUERY,
+            target_market=_MARKET,
+            depth=_DEPTH,
+            llm_fn=default_llm_fn,
+            progress_callback=_print_progress,
+        )
+        # ③ 打印关键产出（report/audit/quality/evaluation/log 文件路径 + 评分 + 评估）
+        score = state.get("opportunity_score", {})
+        print("\n========== 关键产出 ==========")
+        print(f"overall_score  : {score.get('overall_score')}  (by {score.get('scored_by')})")
+        print(f"recommendation : {score.get('recommendation')}")
+        print(f"evaluation     : {state.get('evaluation_summary')}")
+        print("output_paths   :")
+        for _k, _v in state.get("output_paths", {}).items():
+            print(f"  {_k:11}: {_v}")
+
+    asyncio.run(_main())
+

@@ -121,3 +121,23 @@ async def test_search_sources_dedupes_by_url():
     urls = [s["url"] for s in sources]
     assert "https://example.com/same" in urls
     assert "https://example.com/other" in urls
+
+
+def test_normalize_source_falls_back_to_hostname_when_no_title():
+    """raw 没 title/name 时，title 用 url 主机名兜底（去 www），比 'Untitled source' 有辨识度。
+
+    真实场景：Tavily 默认检索器不返回 title，旧逻辑全兜底成 'Untitled source'，
+    导致报告引用全是 [Untitled source](url)，丢失来源辨识度。
+    """
+    source = normalize_source(
+        {"href": "https://www.360researchreports.com/market-reports/x", "body": "..."}
+    )
+    assert source["title"] == "360researchreports.com"  # 去掉 www. 前缀
+    assert source["url"] == "https://www.360researchreports.com/market-reports/x"
+
+
+def test_normalize_source_keeps_untitled_when_url_empty():
+    """raw 既没 title、url 也空/不安全时，才兜底成 'Untitled source'（最后兜底）。"""
+    source = normalize_source({"body": "no title no url"})
+    assert source["title"] == "Untitled source"
+    assert source["url"] == ""

@@ -14,11 +14,12 @@ build_evaluation_summary 从一次研究的最终 state 抽取稳定、可比较
 from __future__ import annotations
 
 from statistics import fmean
+from typing import Any, Mapping
 
 from multi_agents.ecommerce.runtime.telemetry import summarize_governance
 
 
-def build_evaluation_summary(state: dict) -> dict:
+def build_evaluation_summary(state: Mapping[str, Any]) -> dict:
     """从最终 state 构造评估摘要。"""
     audit_log = state.get("audit_log", [])
     # 研究类节点（排除质量审查，因为它是事后检查，不算研究置信度）

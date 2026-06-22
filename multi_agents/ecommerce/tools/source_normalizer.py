@@ -42,10 +42,14 @@ def infer_source_type(url: str, title: str = "") -> str:
 
 def normalize_source(raw: dict[str, Any]) -> EcommerceSource:
     """把任意键名结构的原始结果转成统一 EcommerceSource。"""
-    title = str(raw.get("title") or raw.get("name") or "Untitled source")
+    # 先算 url：title 的兜底链要用 url 主机名（Tavily 等检索器常不返回 title，
+    # 用主机名兜底比 "Untitled source" 有辨识度，报告引用可读性更好）
     url = sanitize_source_url(
         str(raw.get("url") or raw.get("href") or raw.get("link") or "")
     )
+    # title 兜底链：raw.title → raw.name → url 主机名（去 www 前缀）→ "Untitled source"
+    host = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    title = str(raw.get("title") or raw.get("name") or host or "Untitled source")
     snippet = str(
         raw.get("snippet") or raw.get("body") or raw.get("description") or ""
     )
