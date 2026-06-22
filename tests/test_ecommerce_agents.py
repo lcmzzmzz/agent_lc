@@ -266,6 +266,8 @@ async def test_run_review_insight_returns_pain_points():
 @pytest.mark.asyncio
 async def test_run_review_insight_translates_to_chinese_with_llm():
     async def zh_llm(system, user):
+        if "Amazon" in system:
+            return "portable blender"
         return '{"pain_points": ["电池续航差", "清洗麻烦", "漏水"]}'
 
     state = run_planner(create_initial_state("portable blender"))
@@ -273,6 +275,44 @@ async def test_run_review_insight_translates_to_chinese_with_llm():
 
     assert updated["review_result"]["pain_points_language"] == "zh"
     assert "电池续航差" in updated["review_result"]["pain_points"]
+
+
+@pytest.mark.asyncio
+async def test_run_review_insight_llm_scores_structural_risks_low():
+    async def review_llm(system: str, user: str) -> str:
+        if "Amazon" in system:
+            return "portable blender"
+        return (
+            '{"summary":"评论主要集中在安全和耐用风险。",'
+            '"pain_points":["电池过热","刀片安全隐患","漏液"],'
+            '"pain_point_score":3.0,"confidence":0.66,'
+            '"actionable_pain_points":["改善密封"],'
+            '"structural_risks":["安全风险较高","耐用性问题难以快速解决"],'
+            '"scoring_rationale":"痛点多但主要是结构性风险，因此机会分较低。"}'
+        )
+
+    state = run_planner(create_initial_state("portable blender"))
+    updated = await run_review_insight(state, search_fn=fake_search, llm_fn=review_llm)
+
+    result = updated["review_result"]
+    assert result["scored_by"] == "llm"
+    assert result["pain_point_score"] == 3.0
+    assert result["structural_risks"] == ["安全风险较高", "耐用性问题难以快速解决"]
+    assert result["pain_points_language"] == "zh"
+
+
+@pytest.mark.asyncio
+async def test_run_review_insight_invalid_llm_json_marks_rule_fallback():
+    async def bad_json_llm(system: str, user: str) -> str:
+        return "portable blender" if "Amazon" in system else "not json"
+
+    state = run_planner(create_initial_state("portable blender"))
+    updated = await run_review_insight(state, search_fn=fake_search, llm_fn=bad_json_llm)
+
+    result = updated["review_result"]
+    assert result["scored_by"] == "rule"
+    assert result["pain_point_score"] >= 0
+    assert "fallback" in result["scoring_rationale"]
 
 
 @pytest.mark.asyncio

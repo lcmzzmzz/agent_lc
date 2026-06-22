@@ -26,6 +26,13 @@ from multi_agents.ecommerce.llm_helper import LlmFn, llm_json, llm_text
 from multi_agents.ecommerce.prompts import REVIEW_INSIGHT_SYSTEM_PROMPT
 from multi_agents.ecommerce.runtime.budget_manager import BudgetManager
 from multi_agents.ecommerce.runtime.telemetry import record_event
+from multi_agents.ecommerce.agents.content_scoring import (
+    coerce_confidence,
+    coerce_score,
+    coerce_string_list,
+    format_review_texts_for_prompt,
+    rule_rationale,
+)
 from multi_agents.ecommerce.agents.audit import finalize_audit
 from multi_agents.ecommerce.state import EcommerceResearchState
 from multi_agents.ecommerce.tools.product_search import SearchFn
@@ -92,24 +99,25 @@ def _collect_evidence(items: list[ReviewItem]) -> list[dict[str, Any]]:
     return evidence
 
 
-async def _summarize_pain_points_zh(
+async def _score_pain_points_zh(
     llm_fn: LlmFn | None, texts: list[str]
-) -> tuple[list[str] | None, bool]:
-    """用 LLM 把评论文本归纳为中文痛点。返回 (zh_list | None, used_llm)。"""
+) -> tuple[dict | None, bool]:
     if not llm_fn or not texts:
         return None, False
+    review_text = format_review_texts_for_prompt(texts)
     user = (
         "以下是从公开资料/平台抓取的用户评论与反馈（可能为英文）：\n"
-        + "\n".join(f"- {t}" for t in texts[:12])
-        + "\n请把它们归纳成 3-6 条中文用户痛点，每条一句话，客观描述问题。"
-        '只返回 JSON：{"pain_points":["中文痛点1","中文痛点2"]}'
+        + review_text
+        + "\n请只返回 JSON 对象："
+        '{"summary":"2-4句中文总结","pain_points":["中文痛点"],'
+        '"pain_point_score":0-10,"confidence":0-0.9,'
+        '"actionable_pain_points":["中文可转化机会"],'
+        '"structural_risks":["中文结构性风险"],'
+        '"scoring_rationale":"中文评分理由"}。'
+        "pain_point_score 越高代表痛点越具体、频繁、可解决，越能转化为产品或 Listing 改进机会。"
+        "不要因为投诉数量多就自动给高分；如果主要是安全、合规、耐用或品类结构性风险，请降低分数。"
     )
-    data, used = await llm_json(llm_fn, REVIEW_INSIGHT_SYSTEM_PROMPT, user)
-    if used and isinstance(data.get("pain_points"), list) and data["pain_points"]:
-        zh = [str(p) for p in data["pain_points"] if p][:6]
-        if zh:
-            return zh, True
-    return None, False
+    return await llm_json(llm_fn, REVIEW_INSIGHT_SYSTEM_PROMPT, user)
 
 
 async def run_review_insight(
@@ -198,15 +206,53 @@ async def run_review_insight(
         f"[ReviewInsight] 抓取完成 source={scraper.name} review_count={len(items)} fallback_reason={fallback_reason}"
     )
 
-    # LLM 中文归纳
-    zh_pain_points, used_llm = await _summarize_pain_points_zh(llm_fn, raw_texts)
+    # LLM 中文归纳 + 结构化评分
+    llm_data, used_llm = await _score_pain_points_zh(llm_fn, raw_texts)
+    zh_pain_points = (
+        coerce_string_list(llm_data.get("pain_points"), limit=6)
+        if used_llm and llm_data
+        else []
+    )
     final_pain_points = zh_pain_points or raw_texts
     if raw_texts and not used_llm and llm_fn:
         logger.warning("[ReviewInsight] LLM 中文归纳失败，保留原文")
     language = "zh" if used_llm else ("raw" if raw_texts else "none")
 
+    rule_pain_point_score = 8.0 if len(final_pain_points) >= 3 else 5.5
+    rule_confidence = round(min(0.9, 0.3 + len(final_pain_points) * 0.08), 2)
+    pain_point_score = (
+        coerce_score(llm_data, "pain_point_score", rule_pain_point_score)
+        if used_llm
+        else rule_pain_point_score
+    )
+    confidence = (
+        coerce_confidence(llm_data, rule_confidence)
+        if used_llm
+        else rule_confidence
+    )
+    summary = (
+        str(llm_data.get("summary")).strip()
+        if used_llm and llm_data and llm_data.get("summary")
+        else "基于多源评论/反馈归纳用户痛点；评论来源见 review_source 字段。"
+    )
+    actionable_pain_points = (
+        coerce_string_list(llm_data.get("actionable_pain_points"), limit=5)
+        if used_llm and llm_data
+        else final_pain_points[:5]
+    )
+    structural_risks = (
+        coerce_string_list(llm_data.get("structural_risks"), limit=5)
+        if used_llm and llm_data
+        else []
+    )
+    scoring_rationale = (
+        str(llm_data.get("scoring_rationale")).strip()
+        if used_llm and llm_data and llm_data.get("scoring_rationale")
+        else rule_rationale("pain_point_score")
+    )
+
     state["review_result"] = {
-        "summary": "基于多源评论/反馈归纳用户痛点；评论来源见 review_source 字段。",
+        "summary": summary,
         "pain_points": final_pain_points,
         "review_source": scraper.name,           # apify | web_fallback
         "search_keyword": search_keyword,         # 实际传给 Amazon search 的关键词（含翻译+相关性校验链路）
@@ -215,13 +261,18 @@ async def run_review_insight(
         "fallback_reason": fallback_reason,       # None 表示走 Apify 真实评论
         "purchase_motivations": ["便携性", "使用便利性", "适合特定生活方式场景"],
         "negative_review_patterns": final_pain_points[:5],
-        "opportunity_insights": [
+        "opportunity_insights": actionable_pain_points
+        or [
             "将高频抱怨点转化为产品改进点。",
             "在 Listing 中明确使用场景和限制，降低预期偏差。",
         ],
-        "pain_point_score": 8.0 if len(final_pain_points) >= 3 else 5.5,
+        "pain_point_score": pain_point_score,
+        "actionable_pain_points": actionable_pain_points,
+        "structural_risks": structural_risks,
+        "scoring_rationale": scoring_rationale,
+        "scored_by": "llm" if used_llm else "rule",
         "evidence": evidence,
-        "confidence": round(min(0.9, 0.3 + len(final_pain_points) * 0.08), 2),
+        "confidence": confidence,
         "pain_points_language": language,
     }
 
