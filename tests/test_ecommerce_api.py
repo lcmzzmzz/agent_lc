@@ -1,3 +1,5 @@
+import json
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -86,5 +88,34 @@ def test_run_lookup_returns_404_when_missing(monkeypatch):
     monkeypatch.setattr(ecommerce_api, "load_run", raise_missing)
 
     response = _client().get("/api/ecommerce/runs/ecom_missing")
+
+    assert response.status_code == 404
+
+
+def test_eval_run_lookup_reads_summary(tmp_path):
+    eval_run_id = "eval_20260622063000_demo"
+    target = tmp_path / eval_run_id
+    target.mkdir()
+    (target / "summary.json").write_text(
+        json.dumps({"eval_run_id": eval_run_id, "pass_rate": 1.0}),
+        encoding="utf-8",
+    )
+
+    response = _client().get(
+        f"/api/ecommerce/eval/runs/{eval_run_id}",
+        params={"output_dir": str(tmp_path)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["eval_run_id"] == eval_run_id
+
+
+def test_eval_run_lookup_returns_404_when_missing(tmp_path):
+    """[FIX-4]/[FIX-6] unknown eval run is 404; output_dir is configurable."""
+
+    response = _client().get(
+        "/api/ecommerce/eval/runs/eval_missing",
+        params={"output_dir": str(tmp_path)},
+    )
 
     assert response.status_code == 404
