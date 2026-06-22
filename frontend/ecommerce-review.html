@@ -80,6 +80,9 @@
 const $ = (id) => document.getElementById(id);
 let currentRun = null;
 
+// 与 ecommerce-eval.html 一致的 HTML 转义：后端返回的字符串拼进属性/文本前必须先 esc()
+function esc(s){ return (s==null?"":String(s)).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
 function apiBase(){
   return `http://${$("host").value.trim()}`;
 }
@@ -96,9 +99,11 @@ function allSources(run){
 }
 
 function renderEvidence(run){
-  $("evidenceBody").innerHTML = allSources(run).map((src) => `
-    <tr data-url="${src.url || src.href || ""}">
-      <td>${src.url || src.href || src.title || "-"}</td>
+  $("evidenceBody").innerHTML = allSources(run).map((src) => {
+    const url = src.url || src.href || src.title || "";
+    return `
+    <tr data-url="${esc(url)}">
+      <td>${esc(url || "-")}</td>
       <td>
         <select class="sourceLabel">
           <option value="relevant">relevant</option>
@@ -108,8 +113,8 @@ function renderEvidence(run){
         </select>
       </td>
       <td><input class="sourceReason" aria-label="Evidence label reason" /></td>
-    </tr>
-  `).join("");
+    </tr>`;
+  }).join("");
 }
 
 function collectReview(){

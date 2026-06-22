@@ -78,6 +78,8 @@ async def test_run_ecommerce_research_writes_outputs(tmp_path):
     run_meta = json.loads(run_path.read_text(encoding="utf-8"))
     assert run_meta["run_id"] == result["run_id"]
     assert run_meta["output_paths"]["trace"].endswith("portable-blender-trace.json")
+    # 锁定 run.json 的 evaluation_summary 集成契约：trace 节点数应与 agent_trace 一致
+    assert run_meta["evaluation_summary"]["trace_node_count"] == len(result["agent_trace"])
 
 
 @pytest.mark.asyncio

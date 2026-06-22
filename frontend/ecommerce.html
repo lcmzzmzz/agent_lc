@@ -260,6 +260,8 @@ function renderTraceRow(row){
   if(traceKey) seenTraceRows.add(traceKey);
   const out = row.output_summary || {};
   const warnings = (row.warnings || []).join("; ");
+  // warnings 来自服务端，拼进 title 属性前先转义（与 ecommerce-eval.html 的 esc() 同款实现）
+  const escWarn = (s)=>(s==null?"":String(s)).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td>${row.node || "-"}</td>
@@ -268,7 +270,7 @@ function renderTraceRow(row){
     <td>${out.source_count == null ? "-" : out.source_count}</td>
     <td>${firstScore(out.scores)}</td>
     <td>${out.scored_by || "-"}</td>
-    <td class="trace-warn" title="${warnings}">${warnings || "-"}</td>
+    <td class="trace-warn" title="${escWarn(warnings)}">${escWarn(warnings) || "-"}</td>
   `;
   $("traceBody").appendChild(tr);
 }
