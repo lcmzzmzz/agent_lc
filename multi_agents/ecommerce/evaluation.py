@@ -81,6 +81,37 @@ def _summarize_mcp_context(mcp_context: Mapping[str, Any] | None) -> dict[str, A
     }
 
 
+def _summarize_visual_result(visual_result: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not visual_result:
+        return {
+            "visual_enabled": False,
+            "visual_status": "skipped",
+            "visual_prompt_count": 0,
+            "visual_asset_count": 0,
+            "visual_failed_asset_count": 0,
+            "visual_total_tokens": 0,
+        }
+    assets = visual_result.get("assets", [])
+    usage = visual_result.get("usage", {})
+    return {
+        "visual_enabled": bool(visual_result.get("enabled", False)),
+        "visual_status": visual_result.get("status", "skipped"),
+        "visual_prompt_count": len(visual_result.get("prompts", [])),
+        "visual_asset_count": sum(1 for row in assets if row.get("status") == "success"),
+        "visual_failed_asset_count": sum(1 for row in assets if row.get("status") == "failed"),
+        "visual_total_tokens": int(usage.get("total_tokens", 0) or 0),
+    }
+
+
+def _summarize_visual_reviews(review: Mapping[str, Any] | None) -> dict[str, int]:
+    rows = review.get("visual_reviews", []) if review else []
+    return {
+        "visual_approved_count": sum(1 for row in rows if row.get("status") == "approved"),
+        "visual_rejected_count": sum(1 for row in rows if row.get("status") == "rejected"),
+        "visual_needs_edit_count": sum(1 for row in rows if row.get("status") == "needs_edit"),
+    }
+
+
 def build_evaluation_summary(state: Mapping[str, Any]) -> dict:
     """从最终 state 构造评估摘要。"""
     audit_log = state.get("audit_log", [])
@@ -129,4 +160,6 @@ def build_evaluation_summary(state: Mapping[str, Any]) -> dict:
     summary.update(_summarize_human_review(state.get("human_review")))
     summary.update(_summarize_eval_result(state.get("eval_result")))
     summary.update(_summarize_mcp_context(state.get("mcp_context")))
+    summary.update(_summarize_visual_result(state.get("visual_result")))
+    summary.update(_summarize_visual_reviews(state.get("human_review")))
     return summary

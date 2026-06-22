@@ -60,6 +60,7 @@ class EcommerceResearchState(TypedDict, total=False):
     opportunity_score: dict[str, Any]   # scoring 产出：机会评分（六维分 + overall_score + recommendation + scored_by）
     final_report: str                   # writer 产出：Markdown 选品报告（固定 10 节）
     quality_check: dict[str, Any]       # quality 产出：质检结果（passed / citation_coverage / evidence_sufficiency / risk_disclosure / issues）
+    visual_result: dict[str, Any]       # 多模态视觉产物（brief/prompts/assets/usage/warnings）
 
     # ── 可观测性 ──
     audit_log: list[dict[str, Any]]     # 每个节点结束记一条审计（agent / status / duration_ms / source_count / confidence / warning）
@@ -103,6 +104,7 @@ class EcommerceGraphState(TypedDict, total=False):
     opportunity_score: dict[str, Any]   # scoring 节点写入：机会评分
     final_report: str                   # writer 节点写入：Markdown 报告
     quality_check: dict[str, Any]       # quality 节点写入：质检结果
+    visual_result: dict[str, Any]      # visual 节点写入：视觉产物
 
     # ── 累加器（reducer 合并并发分支）──
     audit_log: Annotated[list[dict[str, Any]], operator.add]  # 各节点审计：operator.add 自动拼接并发增量，不覆盖
@@ -153,4 +155,13 @@ def create_initial_state(
         "human_review": {"review_status": "pending"},
         "eval_result": {},
         "mcp_context": {"enabled": False, "strategy": "fast", "tool_calls": []},
+        "visual_result": {
+            "enabled": False,
+            "status": "skipped",
+            "visual_brief": {},
+            "prompts": [],
+            "assets": [],
+            "warnings": [],
+            "usage": {},
+        },
     }

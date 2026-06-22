@@ -92,3 +92,43 @@ def test_build_evaluation_summary_handles_empty_state():
     assert summary["human_overridden_score_count"] == 0
     assert summary["eval_passed"] is None
     assert summary["mcp_enabled"] is False
+
+
+def test_build_evaluation_summary_counts_visual_metrics():
+    state = {
+        "audit_log": [],
+        "trend_result": {"evidence": []},
+        "competitor_result": {"evidence": []},
+        "review_result": {"evidence": []},
+        "opportunity_score": {},
+        "quality_check": {},
+        "visual_result": {
+            "enabled": True,
+            "status": "partial",
+            "prompts": [{"asset_id": "visual_product_01"}, {"asset_id": "visual_listing_01"}],
+            "assets": [
+                {"asset_id": "visual_product_01", "status": "success"},
+                {"asset_id": "visual_listing_01", "status": "failed"},
+            ],
+            "usage": {"total_tokens": 16384},
+        },
+        "human_review": {
+            "visual_reviews": [
+                {"asset_id": "visual_product_01", "status": "approved"},
+                {"asset_id": "visual_listing_01", "status": "rejected"},
+                {"asset_id": "visual_listing_02", "status": "needs_edit"},
+            ]
+        },
+    }
+
+    summary = build_evaluation_summary(state)
+
+    assert summary["visual_enabled"] is True
+    assert summary["visual_status"] == "partial"
+    assert summary["visual_prompt_count"] == 2
+    assert summary["visual_asset_count"] == 1
+    assert summary["visual_failed_asset_count"] == 1
+    assert summary["visual_total_tokens"] == 16384
+    assert summary["visual_approved_count"] == 1
+    assert summary["visual_rejected_count"] == 1
+    assert summary["visual_needs_edit_count"] == 1

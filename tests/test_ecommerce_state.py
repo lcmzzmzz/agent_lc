@@ -91,3 +91,17 @@ def test_create_initial_state_includes_agentops_defaults():
     assert state["human_review"]["review_status"] == "pending"
     assert state["eval_result"] == {}
     assert state["mcp_context"]["enabled"] is False
+
+
+def test_create_initial_state_contains_visual_result():
+    state = create_initial_state("portable blender")
+
+    assert state["visual_result"] == {
+        "enabled": False,
+        "status": "skipped",
+        "visual_brief": {},
+        "prompts": [],
+        "assets": [],
+        "warnings": [],
+        "usage": {},
+    }
