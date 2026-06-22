@@ -60,6 +60,25 @@ async def test_run_ecommerce_research_writes_outputs(tmp_path):
     assert "OpportunityScoringAgent" in agents_logged
     assert "QualityReviewerAgent" in agents_logged
 
+    assert result["run_id"].startswith("ecom_")
+    assert result["agent_trace"]
+    assert result["output_paths"]["trace"].endswith("portable-blender-trace.json")
+    assert result["output_paths"]["human_review"].endswith("portable-blender-human-review.json")
+    assert result["output_paths"]["run"].endswith("portable-blender-run.json")
+
+    trace_path = tmp_path / "portable-blender-trace.json"
+    human_review_path = tmp_path / "portable-blender-human-review.json"
+    run_path = tmp_path / "portable-blender-run.json"
+
+    assert trace_path.exists()
+    assert human_review_path.exists()
+    assert run_path.exists()
+    assert json.loads(trace_path.read_text(encoding="utf-8"))[0]["run_id"] == result["run_id"]
+    assert json.loads(human_review_path.read_text(encoding="utf-8"))["review_status"] == "pending"
+    run_meta = json.loads(run_path.read_text(encoding="utf-8"))
+    assert run_meta["run_id"] == result["run_id"]
+    assert run_meta["output_paths"]["trace"].endswith("portable-blender-trace.json")
+
 
 @pytest.mark.asyncio
 async def test_runner_degrades_when_search_returns_nothing(tmp_path):

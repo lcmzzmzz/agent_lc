@@ -110,6 +110,11 @@ def _resolve_search_fn(search_fn: SearchFn | None) -> SearchFn:
     return default_search_fn  # 没传 → 用默认 Tavily 检索
 
 
+def _write_json(path: Path, payload: Any) -> None:
+    """统一 JSON 落盘：utf-8 + 缩进2 + 保留中文，消除重复 json.dumps(...).write_text(...) 样板。"""
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 async def run_ecommerce_research(
     *,                                  # 关键字参数分隔符：调用时必须写参数名
     query: str,                         # 选品关键词（如"便携榨汁机"）
@@ -164,7 +169,7 @@ async def run_ecommerce_research(
         logger.info(f"========== 研究结束，日志见 {log_path} ==========")
         _teardown_run_log(handler)               # 必摘 handler（成败都要清理文件句柄）
 
-    # ── ④ 落盘：把结果写成 report/audit/quality/evaluation 四个文件，并回填路径 ──
+    # ── ④ 落盘：把结果写成 report/audit/quality/evaluation/trace/human-review/run 文件，并回填路径 ──
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)  # 建输出目录（已存在不报错）
 
@@ -173,22 +178,25 @@ async def run_ecommerce_research(
     audit_path = output_path / f"{slug}-audit.json"           # 审计日志（每步 agent 记录）
     quality_path = output_path / f"{slug}-quality.json"       # 质量检查
     evaluation_path = output_path / f"{slug}-evaluation.json" # 评估汇总（评分/置信度/治理）
+    trace_path = output_path / f"{slug}-trace.json"           # 全链路 trace（每个节点的输入/输出/耗时/治理引用）
+    human_review_path = output_path / f"{slug}-human-review.json"  # 人工评审（HITL）记录
+    run_path = output_path / f"{slug}-run.json"               # 本次运行的元数据（run_id/output_paths/评估摘要）
 
-    report_path.write_text(final_state["final_report"], encoding="utf-8")   # 写报告 .md
-    audit_path.write_text(
-        json.dumps(final_state["audit_log"], ensure_ascii=False, indent=2),  # ensure_ascii=False 保留中文不转义
-        encoding="utf-8",
-    )                                            # 写审计 .json
-    quality_path.write_text(
-        json.dumps(final_state["quality_check"], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )                                            # 写质检 .json
-    evaluation_summary = build_evaluation_summary(final_state)  # 聚合评估指标（总分/置信度/证据数/降级数/耗时）
-    evaluation_path.write_text(
-        json.dumps(evaluation_summary, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )                                            # 写评估 .json
+    report_path.write_text(final_state["final_report"], encoding="utf-8")   # 写报告 .md（纯文本，不走 _write_json）
+    _write_json(audit_path, final_state["audit_log"])          # 写审计 .json
+    _write_json(quality_path, final_state["quality_check"])    # 写质检 .json
+
+    # 【正经注释】evaluation_summary 必须先算：evaluation.json 的内容就是它，run.json 还要把它嵌进去。
+    # 【大白话注释】先把"评估总表"算出来——后面两个文件都指望它。
+    evaluation_summary = build_evaluation_summary(final_state)  # 聚合评估指标（总分/置信度/证据数/降级数/耗时/trace/HITL/MCP）
     final_state["evaluation_summary"] = evaluation_summary      # 顺手塞回 state，调用方可直接读
+
+    _write_json(evaluation_path, evaluation_summary)            # 写评估 .json
+    _write_json(trace_path, final_state.get("agent_trace", []))  # 写 trace .json（节点级执行记录）
+    _write_json(                                          # 写人工评审 .json（HITL；未评审则兜底 pending）
+        human_review_path,
+        final_state.get("human_review", {"review_status": "pending"}),
+    )
 
     # output_paths 在 graph 跑完、落盘后才产生 → 不进图的 channel（所以 EcommerceGraphState 没这个字段）
     final_state["output_paths"] = {              # 汇总所有输出文件路径，供调用方/前端定位
@@ -196,8 +204,20 @@ async def run_ecommerce_research(
         "audit": str(audit_path),
         "quality": str(quality_path),
         "evaluation": str(evaluation_path),
+        "trace": str(trace_path),
+        "human_review": str(human_review_path),
+        "run": str(run_path),
         "log": str(log_path),                    # 带上 log 文件路径（块①那个，方便回看全链路日志）
     }
+    run_metadata = {                             # 组装 run.json：把 run_id/output_paths/评估摘要打成一个可索引的整体
+        "run_id": final_state.get("run_id", ""),
+        "query": final_state.get("query", ""),
+        "target_market": final_state.get("target_market", ""),
+        "created_at_ms": int(datetime.datetime.now().timestamp() * 1000),  # 毫秒级时间戳（与 trace_recorder 口径一致）
+        "output_paths": final_state["output_paths"],
+        "evaluation_summary": evaluation_summary,
+    }
+    _write_json(run_path, run_metadata)          # 写 run.json
     return final_state                           # 返回完整 state（含 output_paths + evaluation_summary）
 
 

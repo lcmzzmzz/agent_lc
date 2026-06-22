@@ -24,6 +24,28 @@ _FAKE_STATE = {
     "trend_result": {"evidence": [{"url": "a"}, {"url": "b"}, {"url": "c"}]},
     "competitor_result": {"evidence": [{"url": "d"}, {"url": "e"}, {"url": "f"}]},
     "review_result": {"evidence": [{"url": "g"}, {"url": "h"}, {"url": "i"}]},
+    "run_id": "ecom_20260622063000_portable-blender_abc123",
+    "agent_trace": [
+        {"status": "success", "output_summary": {"scored_by": "llm"}},
+        {"status": "partial", "output_summary": {"scored_by": "rule"}},
+    ],
+    "human_review": {
+        "review_status": "revised",
+        "evidence_labels": [
+            {"label": "irrelevant"},
+            {"label": "weak"},
+        ],
+        "score_overrides": {
+            "trend_score": {"value": 6.5, "original_value": 7.4}
+        },
+        "report_labels": ["citation_weak"],
+    },
+    "eval_result": {"passed": False, "score": 0.72},
+    "mcp_context": {
+        "enabled": True,
+        "strategy": "fast",
+        "tool_calls": [{"status": "success"}, {"status": "failed"}],
+    },
 }
 
 
@@ -37,6 +59,21 @@ def test_build_evaluation_summary_counts_metrics():
     assert summary["duration_ms"] == 1820
     assert summary["scored_by"] == "llm"
     assert summary["quality_passed"] is True
+    assert summary["run_id"] == "ecom_20260622063000_portable-blender_abc123"
+    assert summary["trace_node_count"] == 2
+    assert summary["partial_node_count"] == 1
+    assert summary["llm_scored_node_count"] == 1
+    assert summary["rule_scored_node_count"] == 1
+    assert summary["human_review_status"] == "revised"
+    assert summary["human_overridden_score_count"] == 1
+    assert summary["human_irrelevant_source_count"] == 1
+    assert summary["human_weak_source_count"] == 1
+    assert summary["human_report_label_count"] == 1
+    assert summary["eval_passed"] is False
+    assert summary["eval_score"] == 0.72
+    assert summary["mcp_enabled"] is True
+    assert summary["mcp_tool_call_count"] == 2
+    assert summary["mcp_failed_tool_call_count"] == 1
 
 
 def test_build_evaluation_summary_handles_empty_state():
@@ -49,3 +86,9 @@ def test_build_evaluation_summary_handles_empty_state():
     assert summary["duration_ms"] == 0
     assert summary["scored_by"] == "rule"
     assert summary["quality_passed"] is False
+    assert summary["run_id"] == ""
+    assert summary["trace_node_count"] == 0
+    assert summary["human_review_status"] == "none"
+    assert summary["human_overridden_score_count"] == 0
+    assert summary["eval_passed"] is None
+    assert summary["mcp_enabled"] is False

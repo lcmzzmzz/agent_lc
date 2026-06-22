@@ -17,6 +17,68 @@ from statistics import fmean
 from typing import Any, Mapping
 
 from multi_agents.ecommerce.runtime.telemetry import summarize_governance
+from multi_agents.ecommerce.runtime.trace_recorder import summarize_trace
+
+
+def _summarize_human_review(review: Mapping[str, Any] | None) -> dict[str, Any]:
+    """把人工评审（HITL）结构压缩成几个可比较的计数指标。
+
+    【正经注释】无评审或字段缺失时返回零值；有评审则统计：评审状态、被覆盖的分数项数、
+    被标记为 irrelevant/weak 的证据数、报告级标签数。
+    【大白话注释】把"人改了哪些东西"数一数：改了几个分数、否了几条证据、贴了几个报告标签。
+    """
+    if not review:
+        return {
+            "human_review_status": "none",
+            "human_overridden_score_count": 0,
+            "human_irrelevant_source_count": 0,
+            "human_weak_source_count": 0,
+            "human_report_label_count": 0,
+        }
+    labels = review.get("evidence_labels", [])
+    return {
+        "human_review_status": review.get("review_status", "pending"),
+        "human_overridden_score_count": len(review.get("score_overrides", {})),
+        "human_irrelevant_source_count": sum(
+            1 for row in labels if row.get("label") == "irrelevant"
+        ),
+        "human_weak_source_count": sum(
+            1 for row in labels if row.get("label") == "weak"
+        ),
+        "human_report_label_count": len(review.get("report_labels", [])),
+    }
+
+
+def _summarize_eval_result(eval_result: Mapping[str, Any] | None) -> dict[str, Any]:
+    """抽取评估结果（passed / score），无值时返回 None/0.0 兜底。"""
+    if not eval_result:
+        return {"eval_passed": None, "eval_score": 0.0}
+    return {
+        "eval_passed": eval_result.get("passed"),
+        "eval_score": float(eval_result.get("score", 0.0)),
+    }
+
+
+def _summarize_mcp_context(mcp_context: Mapping[str, Any] | None) -> dict[str, Any]:
+    """抽取 MCP 工具调用上下文：是否启用、总调用数、失败调用数。
+
+    【正经注释】status 不在 {"success","ok"} 视为失败。
+    【大白话注释】数一下 MCP 工具调了几次、挂了几次。
+    """
+    if not mcp_context:
+        return {
+            "mcp_enabled": False,
+            "mcp_tool_call_count": 0,
+            "mcp_failed_tool_call_count": 0,
+        }
+    calls = mcp_context.get("tool_calls", [])
+    return {
+        "mcp_enabled": bool(mcp_context.get("enabled", False)),
+        "mcp_tool_call_count": len(calls),
+        "mcp_failed_tool_call_count": sum(
+            1 for row in calls if row.get("status") not in {"success", "ok"}
+        ),
+    }
 
 
 def build_evaluation_summary(state: Mapping[str, Any]) -> dict:
@@ -60,4 +122,11 @@ def build_evaluation_summary(state: Mapping[str, Any]) -> dict:
         "review_count": review.get("review_count", 0),
     }
     summary.update(governance_summary)
+    # 【正经注释】追加上层观测指标：run_id、trace 摘要、人工评审、评估结果、MCP 工具调用。
+    # 【大白话注释】把"这次跑了啥/人改了啥/MCP 挂没挂"几个数字也塞进摘要。
+    summary["run_id"] = state.get("run_id", "")
+    summary.update(summarize_trace(state.get("agent_trace", [])))
+    summary.update(_summarize_human_review(state.get("human_review")))
+    summary.update(_summarize_eval_result(state.get("eval_result")))
+    summary.update(_summarize_mcp_context(state.get("mcp_context")))
     return summary
