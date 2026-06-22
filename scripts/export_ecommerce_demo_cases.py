@@ -110,8 +110,66 @@ def _write_case_files(case_dir: Path, slug: str, final_state: dict[str, Any]) ->
         encoding="utf-8",
     )
 
-    # 清理 runner 留下的 slug 前缀副本，保持 case 目录只有 4 个标准命名文件
-    for suffix in ("report.md", "audit.json", "quality.json", "evaluation.json"):
+    # 【正经注释】AgentOps 三件套（trace / human_review / run）也写成标准命名文件。
+    # runner 默认会在 output_dir（=本 case 目录）写出 <slug>-trace.json /
+    # <slug>-human-review.json / <slug>-run.json。这里从 final_state 现取数据写出
+    # 无 slug 前缀的标准副本，让 case 目录布局与 manifest 里的 artifact 链接对齐。
+    # 这三项是可选的（trace / human_review 可能缺失），写之前用 Path.exists() 兜底
+    # 跳过 runner 没产出的文件。
+    _ARTIFACT_STATE_KEY = {  # (state 字段, 标准文件名) —— 复用已有的 json 落盘口径
+        "agent_trace": "trace.json",
+        "human_review": "human-review.json",
+    }
+    for state_key, file_name in _ARTIFACT_STATE_KEY.items():
+        payload = final_state.get(state_key)
+        if payload is None:
+            # 缺失则跳过：不强制写空文件，保持 manifest 链接与实际文件一致
+            continue
+        (case_dir / file_name).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    # run.json：由 runner 的 run_metadata 构造（run_id / output_paths / 评估摘要）。
+    # final_state 里没有完整的 run_metadata（runner 在落盘时才组装），所以优先复用
+    # runner 已经写好的 <slug>-run.json；若不存在则现场构造一份最小可用的。
+    run_canonical = case_dir / "run.json"
+    run_slug_prefixed = case_dir / f"{slug}-run.json"
+    if not run_canonical.exists():
+        if run_slug_prefixed.exists():
+            # 复用 runner 写好的 run.json（含 output_paths + evaluation_summary）
+            try:
+                run_canonical.write_text(
+                    run_slug_prefixed.read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
+            except OSError:
+                # 读失败不阻断主流程；下面兜底再构造一份
+                pass
+        else:
+            # 兜底：runner 没写 run.json 时，用 state 现场拼一份最小 metadata
+            run_metadata_fallback = {
+                "run_id": final_state.get("run_id", ""),
+                "query": final_state.get("query", ""),
+                "target_market": final_state.get("target_market", ""),
+                "output_paths": final_state.get("output_paths", {}),
+                "evaluation_summary": evaluation_summary,
+            }
+            run_canonical.write_text(
+                json.dumps(run_metadata_fallback, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+    # 清理 runner 留下的 slug 前缀副本，保持 case 目录只有标准命名文件
+    for suffix in (
+        "report.md",
+        "audit.json",
+        "quality.json",
+        "evaluation.json",
+        "trace.json",
+        "human-review.json",
+        "run.json",
+    ):
         slug_prefixed = case_dir / f"{slug}-{suffix}"
         if slug_prefixed.exists():
             try:
@@ -252,6 +310,9 @@ def _build_success_entry(
         "evaluation": f"/outputs/ecommerce/demo-cases/{slug}/evaluation.json",
         "audit": f"/outputs/ecommerce/demo-cases/{slug}/audit.json",
         "quality": f"/outputs/ecommerce/demo-cases/{slug}/quality.json",
+        "trace": f"/outputs/ecommerce/demo-cases/{slug}/trace.json",
+        "human_review": f"/outputs/ecommerce/demo-cases/{slug}/human-review.json",
+        "run": f"/outputs/ecommerce/demo-cases/{slug}/run.json",
         "summary": summary,
     }
     # 时间戳是可选的（单测构造时不传），只在给了的时候写进去，保持条目形状稳定

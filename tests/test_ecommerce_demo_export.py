@@ -75,3 +75,28 @@ def test_manifest_preserves_governance_summary_fields():
     # artifact 链接齐全
     assert entry["report"].endswith("portable-blender/report.md")
     assert entry["evaluation"].endswith("portable-blender/evaluation.json")
+
+
+def test_success_entry_includes_agentops_artifact_links():
+    case = {
+        "slug": "portable-blender",
+        "title": "Portable Blender",
+        "query": "portable blender",
+        "target_market": "US",
+        "platforms": ["amazon", "google"],
+        "depth": "standard",
+    }
+    summary = {
+        "overall_score": 6.5,
+        "trace_node_count": 7,
+        "human_overridden_score_count": 1,
+        "mcp_tool_call_count": 0,
+    }
+
+    entry = _build_success_entry(case, summary)
+
+    assert entry["trace"].endswith("portable-blender/trace.json")
+    assert entry["human_review"].endswith("portable-blender/human-review.json")
+    assert entry["run"].endswith("portable-blender/run.json")
+    assert entry["summary"]["trace_node_count"] == 7
+    assert entry["summary"]["human_overridden_score_count"] == 1
