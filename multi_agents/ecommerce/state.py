@@ -18,6 +18,7 @@ import operator
 from typing import Annotated, Any, TypedDict
 
 from multi_agents.ecommerce.runtime.telemetry import empty_governance_state
+from multi_agents.ecommerce.runtime.trace_recorder import make_run_id
 
 
 class EcommerceSource(TypedDict, total=False):
@@ -66,6 +67,11 @@ class EcommerceResearchState(TypedDict, total=False):
     output_paths: dict[str, str]        # runner 落盘后回填的输出文件路径（report / audit / quality / evaluation / log）
     evaluation_summary: dict[str, Any]  # runner 落盘后回填的评估汇总（后处理产物，不进图）
     governance: dict[str, Any]          # 治理账本（usage 用量 / events 事件 / budget_exceeded 等，闭包共享原地改）
+    run_id: str                          # 本次运行稳定 id（ecom_<utc-stamp>_<slug>_<short>）
+    agent_trace: list[dict[str, Any]]    # AgentOps trace：每节点一条（run_id/node/status/耗时/证据/分数/refs）
+    human_review: dict[str, Any]         # 人审反馈（plan/evidence labels/score overrides/report labels）
+    eval_result: dict[str, Any]          # 本次运行参与 golden case 评估的结果
+    mcp_context: dict[str, Any]          # 可选 MCP 工具调用摘要（enabled/strategy/tool_calls）
 
 
 class EcommerceGraphState(TypedDict, total=False):
@@ -105,6 +111,13 @@ class EcommerceGraphState(TypedDict, total=False):
     # ── governance（plain channel，靠 closure 共享引用，节点不返回）──
     governance: dict[str, Any]          # 治理账本（用量/事件/预算），节点不 return 它，靠闭包原地改
 
+    # ── AgentOps trace / 人审 / 评估 / MCP（Task 1 新增）──
+    run_id: str
+    agent_trace: Annotated[list[dict[str, Any]], operator.add]  # 并发分支增量自动拼接（_fresh_child 先重置）
+    human_review: dict[str, Any]
+    eval_result: dict[str, Any]
+    mcp_context: dict[str, Any]
+
 
 def create_initial_state(
     query: str,
@@ -135,4 +148,9 @@ def create_initial_state(
         "audit_log": [],
         "errors": [],
         "governance": empty_governance_state(),
+        "run_id": make_run_id(query),
+        "agent_trace": [],
+        "human_review": {"review_status": "pending"},
+        "eval_result": {},
+        "mcp_context": {"enabled": False, "strategy": "fast", "tool_calls": []},
     }

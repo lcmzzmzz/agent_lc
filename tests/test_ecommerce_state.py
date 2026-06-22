@@ -81,3 +81,13 @@ def test_calculate_overall_score_respects_clamp():
     )
 
     assert 0.0 <= score <= 10.0
+
+
+def test_create_initial_state_includes_agentops_defaults():
+    state = create_initial_state("portable blender")
+
+    assert state["run_id"].startswith("ecom_")
+    assert state["agent_trace"] == []
+    assert state["human_review"]["review_status"] == "pending"
+    assert state["eval_result"] == {}
+    assert state["mcp_context"]["enabled"] is False
