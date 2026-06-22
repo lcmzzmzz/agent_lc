@@ -51,6 +51,45 @@ async def partial_bad_score_llm(system: str, user: str) -> str:
     )
 
 
+def test_content_scoring_helpers_coerce_scores_and_lists():
+    from multi_agents.ecommerce.agents.content_scoring import (
+        coerce_confidence,
+        coerce_score,
+        coerce_string_list,
+        source_count_confidence,
+    )
+
+    data = {"score": "8.7", "confidence": "0.95", "items": ["a", "", 3]}
+
+    assert coerce_score(data, "score", 5.0) == 8.7
+    assert coerce_score({"score": "bad"}, "score", 5.0) == 5.0
+    assert coerce_confidence(data, 0.4) == 0.9
+    assert coerce_confidence({"confidence": "bad"}, 0.4) == 0.4
+    assert coerce_string_list(data["items"], limit=3) == ["a", "3"]
+    assert source_count_confidence(6) == 0.9
+
+
+def test_content_scoring_helpers_format_sources_for_prompt():
+    from multi_agents.ecommerce.agents.content_scoring import format_sources_for_prompt
+
+    text = format_sources_for_prompt(
+        [
+            {
+                "title": "Market report",
+                "url": "https://example.com/report",
+                "snippet": "Demand is growing",
+                "content": "More context",
+            }
+        ],
+        limit=1,
+        max_chars=200,
+    )
+
+    assert "Market report" in text
+    assert "Demand is growing" in text
+    assert "https://example.com/report" in text
+
+
 # ---------------------------------------------------------------------------
 # Task 3: planner / trend / competitor / review
 # ---------------------------------------------------------------------------
