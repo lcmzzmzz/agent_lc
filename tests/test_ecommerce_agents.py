@@ -146,6 +146,8 @@ async def test_run_trend_research_summary_uses_llm():
         state, search_fn=fake_search, llm_fn=fake_trend_llm_json
     )
     assert updated["trend_result"]["summary_source"] == "llm"
+    assert updated["trend_result"]["trend_score"] == 8.0
+    assert updated["trend_result"]["scored_by"] == "llm"
     assert "便携榨汁机" in updated["trend_result"]["summary"]
 
 
@@ -201,6 +203,8 @@ async def test_run_competitor_analysis_summary_uses_llm():
         state, search_fn=fake_search, llm_fn=fake_competitor_llm_json
     )
     assert updated["competitor_result"]["summary_source"] == "llm"
+    assert updated["competitor_result"]["competition_score"] == 6.5
+    assert updated["competitor_result"]["scored_by"] == "llm"
     assert "便携榨汁机" in updated["competitor_result"]["summary"]
 
 
@@ -268,13 +272,20 @@ async def test_run_review_insight_translates_to_chinese_with_llm():
     async def zh_llm(system, user):
         if "Amazon" in system:
             return "portable blender"
-        return '{"pain_points": ["电池续航差", "清洗麻烦", "漏水"]}'
+        return (
+            '{"pain_points":["\u7535\u6c60\u7eed\u822a\u5dee","\u6e05\u6d17\u9ebb\u70e6","\u6f0f\u6c34"],'
+            '"pain_point_score":7.5,"confidence":0.7,'
+            '"actionable_pain_points":["\u6539\u5584\u7535\u6c60\u7eed\u822a"],'
+            '"structural_risks":[],"scoring_rationale":"LLM scored review pain points."}'
+        )
 
     state = run_planner(create_initial_state("portable blender"))
     updated = await run_review_insight(state, search_fn=fake_search, llm_fn=zh_llm)
 
     assert updated["review_result"]["pain_points_language"] == "zh"
     assert "电池续航差" in updated["review_result"]["pain_points"]
+    assert updated["review_result"]["pain_point_score"] == 7.5
+    assert updated["review_result"]["scored_by"] == "llm"
 
 
 @pytest.mark.asyncio
