@@ -44,6 +44,18 @@ async def fake_trend_llm_json(system: str, user: str) -> str:
     )
 
 
+async def fake_competitor_llm_json(system: str, user: str) -> str:
+    return (
+        '{"summary":"\\u4fbf\\u643a\\u69a8\\u6c41\\u673a competitor demand is growing.",'
+        '"competition_score":6.5,"confidence":0.73,'
+        '"competitors":[{"name":"Example Brand","positioning":"mid market"}],'
+        '"competitive_signals":["public search results mention competitors"],'
+        '"entry_barriers":["price competition"],'
+        '"differentiation_opportunities":["improve battery life"],'
+        '"scoring_rationale":"LLM scored competitor entry ease from source content."}'
+    )
+
+
 async def string_score_llm(system: str, user: str) -> str:
     """模拟模型把数字包成字符串返回。"""
     return (
@@ -185,7 +197,9 @@ async def test_run_trend_research_invalid_llm_json_marks_rule_fallback():
 @pytest.mark.asyncio
 async def test_run_competitor_analysis_summary_uses_llm():
     state = run_planner(create_initial_state("portable blender"))
-    updated = await run_competitor_analysis(state, search_fn=fake_search, llm_fn=fake_llm_text)
+    updated = await run_competitor_analysis(
+        state, search_fn=fake_search, llm_fn=fake_competitor_llm_json
+    )
     assert updated["competitor_result"]["summary_source"] == "llm"
     assert "便携榨汁机" in updated["competitor_result"]["summary"]
 
@@ -200,6 +214,43 @@ async def test_run_competitor_analysis_returns_result():
     assert updated["competitor_result"]["price_range"]
     assert "$30" in updated["competitor_result"]["price_range"]
     assert updated["competitor_result"]["evidence"]
+
+
+@pytest.mark.asyncio
+async def test_run_competitor_analysis_llm_lowers_score_for_strong_incumbents():
+    async def competitor_llm(system: str, user: str) -> str:
+        return (
+            '{"summary":"头部品牌强，价格竞争明显。","competition_score":2.0,'
+            '"confidence":0.7,'
+            '"competitors":[{"name":"Dominant Brand","positioning":"头部品牌"}],'
+            '"competitive_signals":["头部品牌占据主要曝光"],'
+            '"entry_barriers":["价格战明显"],'
+            '"differentiation_opportunities":["避开低价同质化"],'
+            '"scoring_rationale":"强势竞品和价格压缩使进入难度较高。"}'
+        )
+
+    state = run_planner(create_initial_state("portable blender"))
+    updated = await run_competitor_analysis(state, search_fn=fake_search, llm_fn=competitor_llm)
+
+    result = updated["competitor_result"]
+    assert result["scored_by"] == "llm"
+    assert result["competition_score"] == 2.0
+    assert result["entry_barriers"] == ["价格战明显"]
+    assert result["competitors"][0]["name"] == "Dominant Brand"
+
+
+@pytest.mark.asyncio
+async def test_run_competitor_analysis_invalid_llm_json_marks_rule_fallback():
+    async def bad_json_llm(system: str, user: str) -> str:
+        return "not json"
+
+    state = run_planner(create_initial_state("portable blender"))
+    updated = await run_competitor_analysis(state, search_fn=fake_search, llm_fn=bad_json_llm)
+
+    result = updated["competitor_result"]
+    assert result["scored_by"] == "rule"
+    assert result["competition_score"] == 6.0
+    assert "fallback" in result["scoring_rationale"]
 
 
 @pytest.mark.asyncio
