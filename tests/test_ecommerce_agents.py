@@ -374,6 +374,27 @@ async def test_run_opportunity_scoring_rule_mode():
 
 
 @pytest.mark.asyncio
+async def test_opportunity_scoring_accepts_content_scored_research_nodes():
+    state = build_ready_state()
+    state["trend_result"]["scored_by"] = "llm"
+    state["trend_result"]["negative_signals"] = ["需求波动"]
+    state["trend_result"]["scoring_rationale"] = "趋势分来自内容分析。"
+    state["competitor_result"]["scored_by"] = "llm"
+    state["competitor_result"]["entry_barriers"] = ["头部品牌强"]
+    state["competitor_result"]["scoring_rationale"] = "竞争分代表切入容易度。"
+    state["review_result"]["scored_by"] = "llm"
+    state["review_result"]["structural_risks"] = ["安全风险"]
+    state["review_result"]["scoring_rationale"] = "痛点分代表可转化机会。"
+
+    updated = await run_opportunity_scoring(state)
+
+    assert updated["opportunity_score"]["overall_score"] > 0
+    assert updated["opportunity_score"]["trend_score"] == state["trend_result"]["trend_score"]
+    assert updated["opportunity_score"]["competition_score"] == state["competitor_result"]["competition_score"]
+    assert updated["opportunity_score"]["pain_point_score"] == state["review_result"]["pain_point_score"]
+
+
+@pytest.mark.asyncio
 async def test_run_opportunity_scoring_uses_llm():
     state = await run_opportunity_scoring(build_ready_state(), llm_fn=fake_llm)
 
