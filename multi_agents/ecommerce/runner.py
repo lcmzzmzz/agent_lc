@@ -125,6 +125,11 @@ async def run_ecommerce_research(
     search_fn: SearchFn | None = None,  # 检索函数（None → 默认 Tavily；测试传 fake_search）
     llm_fn: LlmFn | None = None,        # 大模型函数（None → 全程不调 LLM，走规则）
     progress_callback: ProgressFn | None = None,  # 前端进度回调（None = 无前端/测试）
+    # MCP 相关：Task 4 仅接住这三个 kwarg 并写进 state["mcp_context"]，
+    # 真正的 MCP 检索接线在 Task 8；这里默认值保持向后兼容（不传 = 关闭 MCP）。
+    mcp_enabled: bool = False,          # 是否启用 MCP 工具检索
+    mcp_strategy: str = "fast",         # MCP 策略：fast / standard / deep
+    mcp_configs: list[dict[str, Any]] | None = None,  # MCP server 配置（None = 不附加额外配置）
 ) -> EcommerceResearchState:            # 返回完整 state（含 output_paths / evaluation_summary）
     """端到端跑一次跨境电商选品调研，并写出报告/审计/质检/log 文件。"""
     # ── ① 开日志：挂本次研究的 FileHandler + 开两道闸门（返回 handler 供结束时摘）──
@@ -155,6 +160,17 @@ async def run_ecommerce_research(
             platforms=platforms,
             depth=depth,
         )
+        # 【正经注释】用本次调用传入的 MCP 参数覆盖 create_initial_state 的默认 mcp_context；
+        # Task 4 只是把"是否启用 / 策略 / 配置"如实记进 state（供 evaluation_summary、API 返回读取），
+        # 不改变任何检索行为 —— 真正按 mcp_enabled 切到 MCP 检索的工作在 Task 8。
+        # 【大白话注释】先把用户给的 MCP 开关/策略抄到 state 里，留个记号；至于"按这个开关切检索"
+        # 那是后面 Task 8 干的活，本任务不动。
+        state["mcp_context"] = {
+            "enabled": mcp_enabled,
+            "strategy": mcp_strategy,
+            "tool_calls": [],  # Task 8 会在这里追加真实 MCP 工具调用记录
+            **({"configs": mcp_configs} if mcp_configs is not None else {}),
+        }
         budget_manager = BudgetManager(state["governance"], get_budget_config())  # 2. 建预算管家：传 governance【引用】（闭包共享起点）+ 工厂取预算上限
         resolved_search_fn = _resolve_search_fn(search_fn)                        # 3. 选检索源：传入优先，否则默认 Tavily
         final_state = await run_ecommerce_graph(  # 4. ★ 跑完整 langgraph（内部 build + compile + ainvoke）
