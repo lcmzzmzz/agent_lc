@@ -59,6 +59,16 @@ def test_build_visual_prompts_selects_slots_by_count():
     assert "logo" in six[0]["negative_prompt"].lower()
 
 
+def test_build_visual_prompts_are_distinct_per_slot():
+    state = fake_state()
+    prompts = build_visual_prompts(state, image_count=6)
+    bodies = [p["prompt"] for p in prompts]
+    assert len(set(bodies)) == 6, "each slot's prompt must be distinct, not share one design_direction blob"
+    # Amazon 主图是「纯产品图」，不应塞进差异化卖点（主图合规）
+    main = next(p for p in prompts if p["slot"] == "main_image")
+    assert "easy-clean blade" not in main["prompt"]
+
+
 class SuccessProvider:
     async def generate(self, request: ImageGenerationRequest):
         return ImageGenerationResult(

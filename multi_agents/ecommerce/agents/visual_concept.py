@@ -80,44 +80,59 @@ def _prompt_for_slot(
     brief: dict[str, Any],
 ) -> tuple[str, str, str, list[str]]:
     query = state.get("query", "")
+    market = state.get("target_market", "US")
     pain_points = state.get("review_result", {}).get("pain_points", [])[:3]
     differentiators = _competitor_differentiation(state.get("competitor_result", {}))
+    # 【正经注释】把差异化卖点 / 痛点【按 slot 轮流取用】而不是全拼成一坨塞进每个 prompt ——
+    # 否则 6 个 prompt 末尾都贴同一坨 design_direction blob，出图几乎一样、且分不清 slot 用途。
+    d1 = differentiators[0] if len(differentiators) > 0 else "a differentiated design"
+    d2 = differentiators[1] if len(differentiators) > 1 else d1
+    d3 = differentiators[2] if len(differentiators) > 2 else d2
+    pp1 = pain_points[0] if len(pain_points) > 0 else "everyday convenience"
+    pp2 = pain_points[1] if len(pain_points) > 1 else pp1
     reason_parts = [*differentiators, *pain_points]
     reason = " / ".join(str(item) for item in reason_parts if item) or "derived from ecommerce research evidence"
     source_refs = ["review_result.pain_points", "competitor_result.differentiation_opportunities"]
-    negative = "brand logo, medical claims, exaggerated promises, watermark, distorted product, unreadable text"
+    negative = "brand logo, medical claims, exaggerated promises, watermark, distorted product, unreadable text, cluttered background"
     if kind == "listing" and slot == "main_image":
+        # Amazon 主图：纯白底、单品、无文案无 logo —— 不塞卖点（主图合规要求）
         prompt = (
-            f"Amazon main image draft for {query}. Pure white background, single product centered, "
-            f"premium clean ecommerce product photography, clear shape and material, no text, no logo. "
-            f"Design direction: {brief.get('design_direction', '')}. Avoid medical claims."
+            f"Amazon main image of a {query}: single product centered on a pure white (#FFFFFF) background, "
+            f"no props, no text, no logo, product fills about 85% of the frame. Clean even studio lighting, "
+            f"accurate shape and realistic materials. Catalog-ready for the {market} marketplace."
         )
     elif kind == "listing" and slot == "infographic":
+        # 卖点信息图：三个差异化卖点做成 callout
         prompt = (
-            f"Amazon listing infographic concept for {query}. Show simple visual callouts for key benefits: "
-            f"{brief.get('design_direction', '')}. Use clean layout, minimal readable text, realistic product render, "
-            f"no brand logo, no exaggerated claims."
+            f"Amazon listing infographic for a {query}: realistic product render on a light background with "
+            f"three clean benefit callouts — {d1}, {d2}, {d3}. Minimal legible English text labels with simple "
+            f"icon markers, tidy layout, no brand logo, no exaggerated claims."
         )
     elif kind == "listing" and slot == "lifestyle":
+        # 生活方式图：目标用户在真实场景使用，强调解决某个痛点
         prompt = (
-            f"Lifestyle ecommerce scene for {query}. Show the product used by the target customer in a realistic daily scenario, "
-            f"natural light, premium but believable, emphasize convenience and differentiation: {brief.get('design_direction', '')}."
+            f"Amazon lifestyle image of a {query}: target customer using it in a believable daily scene "
+            f"(commute, gym, or kitchen), natural light, premium but realistic. Emphasize portability and "
+            f"that it solves: {pp1}. No text overlay, no logo."
         )
     elif slot == "detail":
+        # 差异化细节微距：聚焦某个具体卖点结构
         prompt = (
-            f"Detailed product concept render for {query}. Focus on differentiated functional details: "
-            f"{brief.get('design_direction', '')}. Macro product photography, clean background, realistic materials."
+            f"Macro detail close-up of the {query}'s differentiating feature: {d2}. Tight crop on a clean "
+            f"white surface, raking light to reveal material and mechanism, photorealistic. No text, no logo."
         )
     elif slot == "use_case":
+        # 使用场景图：真实客户在用，强调解决另一个痛点
         prompt = (
-            f"Product use case concept image for {query}. Show the product in context with a realistic customer scenario, "
-            f"clean modern ecommerce style, emphasize pain point solutions: {brief.get('design_direction', '')}."
+            f"Use-case concept image of a {query}: a realistic customer scenario showing it in action, "
+            f"modern clean ecommerce style. Emphasize how it solves the pain point: {pp2}. No logo, no watermark."
         )
     else:
+        # product_concept / appearance：产品概念 hero 图，突出首要卖点
         prompt = (
-            f"High quality ecommerce product concept render for {query}. "
-            f"Design direction: {brief.get('design_direction', '')}. "
-            f"Premium realistic product photography, clean background, no logo, no watermark."
+            f"Hero product concept render of a {query} for {market} ecommerce buyers: full product at a "
+            f"three-quarter angle on a seamless light-gray studio background, soft directional light, premium "
+            f"realistic materials. Make the key differentiator visible — {d1}. No logo, no text, no watermark."
         )
     return prompt, negative, reason, source_refs
 
