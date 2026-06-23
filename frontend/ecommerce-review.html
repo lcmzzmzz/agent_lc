@@ -73,6 +73,12 @@
       <label><input type="checkbox" class="reportLabel" value="overconfident" /> overconfident</label>
       <label><input type="checkbox" class="reportLabel" value="evidence_mismatch" /> evidence_mismatch</label>
     </div>
+
+    <h2>Visual Asset Review</h2>
+    <table>
+      <thead><tr><th>Asset</th><th>Status</th><th>Tags</th><th>Reason</th></tr></thead>
+      <tbody id="visualReviewBody"></tbody>
+    </table>
     <button id="saveBtn">Save Review</button>
   </div>
 </main>
@@ -117,6 +123,24 @@ function renderEvidence(run){
   }).join("");
 }
 
+function renderVisualReviews(run){
+  const assets = ((run.visual_result || {}).assets || []);
+  $("visualReviewBody").innerHTML = assets.map(asset => `
+    <tr data-asset-id="${esc(asset.asset_id || "")}">
+      <td>${esc(asset.asset_id || "-")}<br><span class="pill">${esc(asset.kind || "-")}/${esc(asset.slot || "-")}</span></td>
+      <td>
+        <select class="visualStatus">
+          <option value="approved">approved</option>
+          <option value="rejected">rejected</option>
+          <option value="needs_edit">needs_edit</option>
+        </select>
+      </td>
+      <td><input class="visualTags" placeholder="good_differentiation,text_artifact" /></td>
+      <td><input class="visualReason" aria-label="Visual review reason" /></td>
+    </tr>
+  `).join("");
+}
+
 function collectReview(){
   const labels = Array.from(document.querySelectorAll("#evidenceBody tr")).map(row => ({
     url: row.dataset.url,
@@ -138,6 +162,12 @@ function collectReview(){
     evidence_labels: labels,
     score_overrides,
     report_labels: Array.from(document.querySelectorAll(".reportLabel:checked")).map(x => x.value),
+    visual_reviews: Array.from(document.querySelectorAll("#visualReviewBody tr")).map(row => ({
+      asset_id: row.dataset.assetId,
+      status: row.querySelector(".visualStatus").value,
+      tags: row.querySelector(".visualTags").value.split(",").map(x => x.trim()).filter(Boolean),
+      reason: row.querySelector(".visualReason").value.trim(),
+    })),
   };
 }
 
@@ -147,6 +177,7 @@ $("loadBtn").onclick = async () => {
   if(!res.ok){ setStatus(`load failed ${res.status}`, "bad"); return; }
   currentRun = await res.json();
   renderEvidence(currentRun);
+  renderVisualReviews(currentRun);
   $("reviewCard").classList.remove("hidden");
   setStatus("loaded", "ok");
 };

@@ -244,7 +244,18 @@ function render(cases){
         <td class="num">${s.eval_passed == null ? "-" : (s.eval_passed ? "PASS" : "FAIL")} ${s.eval_score == null ? "" : Number(s.eval_score).toFixed(2)}</td>
         <td class="num">${s.human_overridden_score_count == null ? "-" : s.human_overridden_score_count}</td>
         <td class="num">${s.mcp_tool_call_count == null ? "-" : s.mcp_tool_call_count}</td>
-        <td>${badge}</td>
+        <td>${badge}
+          <div style="margin-top:6px;">
+            <span class="pill">visual_status</span>
+            <span class="pill">visual_asset_count</span>
+            <span class="pill">visual_failed_asset_count</span>
+          </div>
+          <div style="margin-top:4px; font-size:12px; color:var(--mut);">
+            ${s.visual_status == null ? "-" : esc(s.visual_status)} ·
+            ${s.visual_asset_count == null ? "-" : s.visual_asset_count} assets ·
+            ${s.visual_failed_asset_count == null ? "-" : s.visual_failed_asset_count} failed
+          </div>
+        </td>
         <td>${r.report ? `<a href="${esc(r.report)}" target="_blank" rel="noopener" style="color:var(--acc);">查看 ↗</a>` : "-"}</td>
       </tr>`;
   }).join("");

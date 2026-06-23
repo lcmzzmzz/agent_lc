@@ -54,6 +54,11 @@
   #report ul { padding-left:20px; }
   .hidden { display:none; }
   .err { color:var(--bad); }
+  .visual-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-top:12px; }
+  .visual-item { background:#0b1220; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  .visual-item img { width:100%; display:block; aspect-ratio:1/1; object-fit:cover; background:#020617; }
+  .visual-meta { padding:10px; font-size:12px; color:var(--mut); }
+  .visual-meta details { margin-top:8px; }
 </style>
 </head>
 <body>
@@ -90,6 +95,18 @@
       <label style="margin:0; display:flex; align-items:center; gap:6px;">
         <input type="checkbox" id="useLlm" checked style="width:auto;" /> 启用 LLM 打分（关闭则纯规则）
       </label>
+      <label style="margin:0; display:flex; align-items:center; gap:6px;">
+        <input type="checkbox" id="visualEnabled" style="width:auto;" /> 生成视觉概念图
+      </label>
+      <label style="margin:0; display:flex; align-items:center; gap:6px;">
+        图片数量
+        <select id="visualImageCount" style="width:auto; padding:6px 8px;">
+          <option value="1">1</option>
+          <option value="3">3</option>
+          <option value="6" selected>6</option>
+        </select>
+      </label>
+      <span class="pill">模型 doubao-seedream-4-5-251128</span>
       <span class="pill" id="connState">未连接</span>
     </div>
   </div>
@@ -145,6 +162,12 @@
         <tbody id="auditBody"></tbody>
       </table>
     </div>
+  </div>
+
+  <div class="card hidden" id="visualCard">
+    <strong>Visual Concepts</strong>
+    <span class="pill" id="visualStatus">-</span>
+    <div class="visual-grid" id="visualGrid"></div>
   </div>
 
   <!-- 报告 -->
@@ -275,6 +298,32 @@ function renderTraceRow(row){
   $("traceBody").appendChild(tr);
 }
 
+function renderVisualResult(visual){
+  // [FIX-2] local esc — ecommerce.html's escWarn lives inside renderTraceRow and is not in scope here.
+  const esc = (s)=>(s==null?"":String(s)).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  if(!visual || !visual.status || visual.status === "skipped") return;
+  $("visualCard").classList.remove("hidden");
+  $("visualStatus").textContent = visual.status;
+  const assets = visual.assets || [];
+  const prompts = visual.prompts || [];
+  const rows = assets.length ? assets : prompts.map(p => ({...p, status:"prompt_only"}));
+  $("visualGrid").innerHTML = rows.map(row => {
+    const imageUrl = row.remote_url || row.local_path || "";
+    const image = imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(row.asset_id || "visual asset")}" />` : "";
+    return `
+      <div class="visual-item">
+        ${image}
+        <div class="visual-meta">
+          <div><span class="pill">${esc(row.kind || "-")}</span> <span class="pill">${esc(row.slot || "-")}</span></div>
+          <div>Status: ${esc(row.status || "-")}</div>
+          <div>${esc(row.reason || "")}</div>
+          <details><summary>Prompt</summary><div>${esc(row.prompt || "")}</div></details>
+          ${row.warning ? `<div class="warn">${esc(row.warning)}</div>` : ""}
+        </div>
+      </div>`;
+  }).join("");
+}
+
 $("runBtn").addEventListener("click", () => {
   const query = $("query").value.trim();
   if(!query){ alert("请输入品类关键词"); return; }
@@ -292,7 +341,10 @@ $("runBtn").addEventListener("click", () => {
       query,
       target_market: $("market").value,
       depth: $("depth").value,
-      use_llm: $("useLlm").checked
+      use_llm: $("useLlm").checked,
+      visual_enabled: $("visualEnabled").checked,
+      visual_model: "doubao-seedream-4-5-251128",
+      visual_image_count: Number($("visualImageCount").value)
     }));
   };
   ws.onmessage = (evt) => {
@@ -309,6 +361,7 @@ $("runBtn").addEventListener("click", () => {
       renderQuality(data.quality_check || {});
       renderAudit(data.audit_log || []);
       renderReport(data.report || "");
+      renderVisualResult(data.visual_result || {});
       setConn("完成","ok");
       $("runBtn").disabled = false;
       ws.close();
