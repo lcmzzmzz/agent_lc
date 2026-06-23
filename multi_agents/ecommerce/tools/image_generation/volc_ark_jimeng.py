@@ -19,6 +19,7 @@ from multi_agents.ecommerce.tools.image_generation.base import (
 Downloader = Callable[[str, Path], dict[str, Any]]
 
 ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+OUTPUT_FORMAT_MODELS = {"doubao-seedream-5-0-260128"}
 
 
 def _redacted_error(exc: Exception) -> str:
@@ -34,6 +35,10 @@ def _parse_size(value: str | None) -> tuple[int, int]:
         return int(left), int(right)
     except ValueError:
         return 0, 0
+
+
+def _supports_output_format(model: str) -> bool:
+    return model in OUTPUT_FORMAT_MODELS
 
 
 def _extension_from_url_or_type(url: str, mime_type: str) -> str:
@@ -115,16 +120,15 @@ class VolcArkJimengProvider:
                     model=request.model,
                     warning="missing ARK_API_KEY",
                 )
-            # [FIX-9] 官方 Ark 示例对所有 seedream 模型都发 output_format="png"（含 4-5），
-            # 推翻 spec 旧说法"4-5 不支持 output_format"。
             kwargs: dict[str, Any] = {
                 "model": request.model,
                 "prompt": request.prompt,
                 "size": request.size,
                 "response_format": "url",
                 "watermark": request.watermark,
-                "output_format": "png",
             }
+            if _supports_output_format(request.model):
+                kwargs["output_format"] = "png"
             response = await asyncio.to_thread(client.images.generate, **kwargs)
             image = response.data[0]
             remote_url = str(image.url)

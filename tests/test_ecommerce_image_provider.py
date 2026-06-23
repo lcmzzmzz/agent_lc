@@ -52,7 +52,7 @@ def fake_downloader(url, target_path):
 
 
 @pytest.mark.asyncio
-async def test_seedream_45_sends_png_output_format(tmp_path):
+async def test_seedream_45_omits_unsupported_output_format(tmp_path):
     client = FakeArkClient()
     provider = VolcArkJimengProvider(
         output_dir=tmp_path,
@@ -69,8 +69,7 @@ async def test_seedream_45_sends_png_output_format(tmp_path):
     )
 
     assert result.status == "success"
-    # [FIX-9] 官方示例对 4-5 也发 output_format="png"
-    assert client.images.kwargs["output_format"] == "png"
+    assert "output_format" not in client.images.kwargs
     assert client.images.kwargs["response_format"] == "url"
     assert Path(result.local_path).exists()
     assert result.width == 2048

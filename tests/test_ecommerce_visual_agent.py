@@ -22,7 +22,7 @@ def fake_state():
     }
     state["competitor_result"] = {
         "summary": "Most competitors look similar and compete on price.",
-        "gaps": ["easy-clean blade", "leak-proof cap"],
+        "differentiation_opportunities": ["easy-clean blade", "leak-proof cap"],
     }
     state["review_result"] = {
         "pain_points": ["cleaning is difficult", "battery life is short", "leaks in bags"],
@@ -53,6 +53,9 @@ def test_build_visual_prompts_selects_slots_by_count():
     assert six[0]["asset_id"] == "visual_product_01"
     assert six[-1]["asset_id"] == "visual_listing_03"
     assert "portable blender" in six[0]["prompt"].lower()
+    assert "easy-clean blade" in six[0]["prompt"]
+    assert "leak-proof cap" in six[0]["reason"]
+    assert "competitor_result.differentiation_opportunities" in six[0]["source_refs"]
     assert "logo" in six[0]["negative_prompt"].lower()
 
 

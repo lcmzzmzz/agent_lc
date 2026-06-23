@@ -45,18 +45,29 @@ def _selected_slots(image_count: int) -> list[tuple[str, str, str]]:
     return SLOTS[:6]
 
 
+def _competitor_differentiation(competitor: dict[str, Any], *, limit: int = 3) -> list[str]:
+    values = competitor.get("differentiation_opportunities") or competitor.get("gaps") or []
+    if isinstance(values, str):
+        candidates = [values]
+    elif isinstance(values, (list, tuple)):
+        candidates = list(values)
+    else:
+        candidates = []
+    return [str(item).strip() for item in candidates if str(item).strip()][:limit]
+
+
 def build_visual_brief(state: EcommerceResearchState) -> dict[str, Any]:
     query = state.get("query", "")
     review = state.get("review_result", {})
     competitor = state.get("competitor_result", {})
     score = state.get("opportunity_score", {})
     pain_points = review.get("pain_points", [])[:3]
-    gaps = competitor.get("gaps", [])[:3]
+    differentiators = _competitor_differentiation(competitor)
     return {
         "product_positioning": f"{query} product concept for {state.get('target_market', 'US')} ecommerce buyers",
         "target_customer": "buyers matching the observed trend and review pain points",
-        "design_direction": ", ".join([*gaps, *pain_points]) or score.get("recommendation", ""),
-        "differentiation": gaps,
+        "design_direction": ", ".join([*differentiators, *pain_points]) or score.get("recommendation", ""),
+        "differentiation": differentiators,
         "risk_notes": score.get("risks", []) or ["avoid brand logos", "avoid medical claims", "avoid exaggerated promises"],
     }
 
@@ -70,10 +81,10 @@ def _prompt_for_slot(
 ) -> tuple[str, str, str, list[str]]:
     query = state.get("query", "")
     pain_points = state.get("review_result", {}).get("pain_points", [])[:3]
-    gaps = state.get("competitor_result", {}).get("gaps", [])[:3]
-    reason_parts = [*gaps, *pain_points]
+    differentiators = _competitor_differentiation(state.get("competitor_result", {}))
+    reason_parts = [*differentiators, *pain_points]
     reason = " / ".join(str(item) for item in reason_parts if item) or "derived from ecommerce research evidence"
-    source_refs = ["review_result.pain_points", "competitor_result.gaps"]
+    source_refs = ["review_result.pain_points", "competitor_result.differentiation_opportunities"]
     negative = "brand logo, medical claims, exaggerated promises, watermark, distorted product, unreadable text"
     if kind == "listing" and slot == "main_image":
         prompt = (

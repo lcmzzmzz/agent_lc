@@ -16,7 +16,7 @@
 
 - The current working tree already contains uncommitted review fixes and the visual concept spec. Do not revert or overwrite them.
 - Default visual model is `doubao-seedream-4-5-251128`.
-- All Seedream models send `output_format="png"` — the official Ark SDK example sends it for `doubao-seedream-4-5-251128` too. ([FIX-9] supersedes the spec's old "4-5 does not support output_format" claim; the `_supports_output_format` model-capability branch was removed.)
+- `doubao-seedream-4-5-251128` must not send `output_format`; a real Ark smoke on 2026-06-23 returned `InvalidParameter` when `output_format` was included. `doubao-seedream-5-0-260128` may send `output_format="png"` only through explicit model capability logic. ([FIX-9] reverts the earlier official-example inference.)
 - API keys must only be read from `ARK_API_KEY` or `VOLCENGINE_ARK_API_KEY`; never write keys into source, logs, trace, evaluation, human review, or artifacts.
 - Visual generation failure must degrade to prompt-only or failed visual assets and must not break the main text research report.
 - Default unit tests must not call the real Volcengine API.
@@ -325,7 +325,7 @@ def fake_downloader(url, target_path):
 
 
 @pytest.mark.asyncio
-async def test_seedream_45_sends_png_output_format(tmp_path):
+async def test_seedream_45_omits_unsupported_output_format(tmp_path):
     client = FakeArkClient()
     provider = VolcArkJimengProvider(
         output_dir=tmp_path,
@@ -342,8 +342,7 @@ async def test_seedream_45_sends_png_output_format(tmp_path):
     )
 
     assert result.status == "success"
-    # [FIX-9] 官方示例对 4-5 也发 output_format="png"
-    assert client.images.kwargs["output_format"] == "png"
+    assert "output_format" not in client.images.kwargs
     assert client.images.kwargs["response_format"] == "url"
     assert Path(result.local_path).exists()
     assert result.width == 2048
@@ -666,16 +665,15 @@ class VolcArkJimengProvider:
                     model=request.model,
                     warning="missing ARK_API_KEY",
                 )
-            # [FIX-9] 官方 Ark 示例对所有 seedream 模型都发 output_format="png"（含 4-5），
-            # 推翻 spec 旧说法"4-5 不支持 output_format"。
             kwargs: dict[str, Any] = {
                 "model": request.model,
                 "prompt": request.prompt,
                 "size": request.size,
                 "response_format": "url",
                 "watermark": request.watermark,
-                "output_format": "png",
             }
+            if _supports_output_format(request.model):
+                kwargs["output_format"] = "png"
             response = await asyncio.to_thread(client.images.generate, **kwargs)
             image = response.data[0]
             remote_url = str(image.url)
@@ -2055,7 +2053,7 @@ git commit -m "chore(ecommerce): add jimeng smoke script"
 - Safety:
   - No test calls the real Volcengine API by default.
   - No code stores API keys.
-  - All Seedream models send `output_format="png"` ([FIX-9]).
+  - `doubao-seedream-4-5-251128` omits `output_format`; only explicit capability models send it ([FIX-9]).
 
 ---
 
@@ -2074,6 +2072,6 @@ v2 folds in five review findings. v1 is preserved unchanged. No other task scope
 - **FIX-5 (all "Run:" steps + Global Constraints) — `py` → the project conda-env interpreter.** Every `py -m pytest` / `py -m py_compile` / `py scripts/...` in v1 resolves to a C-drive Python 3.13 missing `mistune`/`langchain_community` and fails at collection. v2 points all Run steps at `C:/Users/lcmzz/.conda/envs/gpt-researcher-main/python.exe` (verified: imports `mistune`/`langchain_community`/`PIL`/`volcenginesdkarkruntime`) and records the constraint globally. *(Post-review P1 correction: an earlier draft used the conda-base `/d/conda/python.exe`, which both lacks `langchain_community` and is not a valid command in the user's PowerShell — corrected to the project env path.)*
 - **FIX-7 (Task 7 Step 5) — smoke env var is PowerShell-native.** The draft wrote `set ARK_API_KEY=…` (cmd syntax), which is a silent no-op in PowerShell. v2 uses `$env:ARK_API_KEY="…"` and invokes the interpreter with the PowerShell call operator (`& "C:\Users\lcmzz\.conda\envs\gpt-researcher-main\python.exe" …`). The key is read from the env var only — never hardcoded into source or artifacts.
 - **FIX-8 (Task 2 Step 5 + tests) — provider `_client()` moved inside `try`.** The draft called `client = self._client()` before the try, so an SDK import error or `Ark()` init failure escaped `generate()` as a raised exception — breaking the provider's "always return `ImageGenerationResult`" contract and crashing the smoke script instead of printing `status=failed`. v2 wraps `_client()` (and the missing-key short-circuit) in the try; a new test `test_provider_returns_failed_when_client_init_raises` pins it.
-- **FIX-9 (Task 2 + Global Constraints + Self-Review) — `output_format` aligned to the official Ark SDK example.** The spec claimed `doubao-seedream-4-5-251128` does not support `output_format`, so the draft gated it behind `_supports_output_format(model)` (only true for `doubao-seedream-5-`) and a test asserted 4-5 omits it. The official example sends `output_format="png"` with `doubao-seedream-4-5-251128`, so v2 now sends `output_format="png"` for every Seedream model, removes the `_supports_output_format` branch, and flips the 4-5 test to assert `output_format == "png"`.
+- **FIX-9 (Task 2 + Global Constraints + Self-Review) — `output_format` aligned to real Ark smoke behavior.** A live `doubao-seedream-4-5-251128` smoke on 2026-06-23 returned `InvalidParameter` when `output_format` was sent, so v2 keeps the model-capability branch, omits `output_format` for 4-5, and keeps the 4-5 test asserting the parameter is absent. `doubao-seedream-5-0-260128` remains the explicit model that sends `output_format="png"`.
 
-Non-blocking notes carried over (no plan change needed, flagged for execution): the Ark SDK call shape (`client.images.generate(...)` + `response.data[0].url`, including `output_format="png"` per FIX-9) now matches the official example — only the Task 7 manual smoke exercises the real endpoint; `visual_result` is also added to `EcommerceGraphState` (harmless, slightly beyond spec since the visual node runs post-graph); the `volcengine-python-sdk[ark]>=5.0.35` floor is an unverified pin that only affects the real smoke.
+Non-blocking notes carried over (no plan change needed, flagged for execution): the Ark SDK call shape (`client.images.generate(...)` + `response.data[0].url`) is only exercised by the Task 7 manual smoke; `visual_result` is also added to `EcommerceGraphState` (harmless, slightly beyond spec since the visual node runs post-graph); the `volcengine-python-sdk[ark]>=5.0.35` floor is an unverified pin that only affects the real smoke.
