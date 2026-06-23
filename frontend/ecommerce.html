@@ -198,6 +198,9 @@ function resetUI(){
   $("traceCard").classList.add("hidden");
   $("traceBody").innerHTML = "";
   $("runIdPill").textContent = "run_id: -";
+  $("visualCard").classList.add("hidden");
+  $("visualGrid").innerHTML = "";
+  $("visualStatus").textContent = "-";
   seenTraceRows.clear();
 }
 
@@ -307,8 +310,19 @@ function renderVisualResult(visual){
   const assets = visual.assets || [];
   const prompts = visual.prompts || [];
   const rows = assets.length ? assets : prompts.map(p => ({...p, status:"prompt_only"}));
+  // local_path 是相对文件系统路径（outputs/ecommerce/<slug>-visual/x.png，Windows 下带反斜杠），
+  // 浏览器从 /site/ecommerce.html 去解析它会 404。映射成后端 /outputs/ 静态挂载的 URL 才能显示；
+  // remote_url 是 Ark 的临时 CDN url，直接用。
+  const imgSrc = (row) => {
+    const raw = row.remote_url || row.local_path || "";
+    if(!raw) return "";
+    if(/^https?:\/\//i.test(raw)) return raw;
+    const p = raw.replace(/\\/g, "/");
+    const idx = p.indexOf("outputs/");
+    return idx >= 0 ? "/" + p.slice(idx) : "";
+  };
   $("visualGrid").innerHTML = rows.map(row => {
-    const imageUrl = row.remote_url || row.local_path || "";
+    const imageUrl = imgSrc(row);
     const image = imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(row.asset_id || "visual asset")}" />` : "";
     return `
       <div class="visual-item">

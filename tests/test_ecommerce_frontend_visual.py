@@ -15,6 +15,17 @@ def test_ecommerce_page_contains_visual_controls_and_panel():
     assert "visual_image_count" in html
 
 
+def test_ecommerce_page_resets_visual_panel():
+    html = (ROOT / "frontend" / "ecommerce.html").read_text(encoding="utf-8")
+    start = html.index("function resetUI()")
+    end = html.index("function renderTimeline", start)
+    block = html[start:end]
+
+    assert '$("visualCard").classList.add("hidden");' in block
+    assert '$("visualGrid").innerHTML = "";' in block
+    assert '$("visualStatus").textContent = "-";' in block
+
+
 def test_review_page_contains_visual_review_controls():
     html = (ROOT / "frontend" / "ecommerce-review.html").read_text(encoding="utf-8")
 
